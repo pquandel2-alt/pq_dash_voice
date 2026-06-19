@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DashVoice — Ok Nabu</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0a0a0f;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ── Background aurora ── */
+  .aurora {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+  .aurora-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0;
+    transition: opacity 1.2s ease, background 0.8s ease;
+  }
+  .aurora-blob.a1 { width: 600px; height: 600px; top: -200px; left: -200px; }
+  .aurora-blob.a2 { width: 500px; height: 500px; bottom: -150px; right: -150px; }
+  body.listening .aurora-blob { opacity: 0.12; background: #4CAF50; }
+  body.thinking  .aurora-blob.a1 { opacity: 0.10; background: #2196F3; }
+  body.thinking  .aurora-blob.a2 { opacity: 0.10; background: #03A9F4; }
+  body.speaking  .aurora-blob { opacity: 0.14; background: #9C27B0; }
+
+  /* ── Main layout ── */
+  .scene {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+  }
+
+  /* ── Orb container ── */
+  .orb-wrap {
+    position: relative;
+    width: min(300px, 70vw);
+    height: min(300px, 70vw);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Floor light */
+  .floor-light {
+    position: absolute;
+    bottom: -40px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 160px;
+    height: 40px;
+    border-radius: 50%;
+    filter: blur(24px);
+    opacity: 0;
+    transition: opacity 0.6s ease, background 0.6s ease;
+    pointer-events: none;
+  }
+  body.listening .floor-light { opacity: 0.55; background: #4CAF50; }
+  body.thinking  .floor-light { opacity: 0.45; background: #2196F3; }
+  body.speaking  .floor-light { opacity: 0.65; background: #9C27B0; }
+
+  /* CSS glow ring around canvas */
+  .orb-glow {
+    position: absolute;
+    inset: -20px;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.6s ease, box-shadow 0.6s ease;
+    pointer-events: none;
+  }
+  body.listening .orb-glow { opacity: 1; box-shadow: 0 0 60px 20px rgba(76,175,80,0.25); }
+  body.thinking  .orb-glow { opacity: 1; box-shadow: 0 0 60px 20px rgba(33,150,243,0.25); }
+  body.speaking  .orb-glow { opacity: 1; box-shadow: 0 0 80px 30px rgba(156,39,176,0.30); }
+
+  canvas {
+    position: relative;
+    z-index: 2;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    border-radius: 50%;
+  }
+  body.active canvas { opacity: 1; }
+
+  /* ── Text area ── */
+  .text-area {
+    text-align: center;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .state-label {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    opacity: 0;
+    transition: opacity 0.4s ease, color 0.4s ease;
+    color: #888;
+  }
+  body.listening .state-label { opacity: 1; color: #4CAF50; }
+  body.thinking  .state-label { opacity: 1; color: #2196F3; }
+  body.speaking  .state-label { opacity: 1; color: #CE93D8; }
+
+  .transcript {
+    font-size: 18px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.9);
+    min-height: 28px;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  .transcript.visible { opacity: 1; }
+
+  .response {
+    font-size: 15px;
+    color: rgba(255,255,255,0.55);
+    min-height: 24px;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+    max-width: 340px;
+  }
+  .response.visible { opacity: 1; }
+
+  /* Thinking dots */
+  .thinking-dots {
+    display: none;
+    gap: 6px;
+    align-items: center;
+    height: 28px;
+  }
+  body.thinking .thinking-dots { display: flex; }
+  .thinking-dots span {
+    display: block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #2196F3;
+    animation: dotBounce 1.2s infinite ease-in-out;
+  }
+  .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes dotBounce {
+    0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+    40%           { transform: scale(1.2); opacity: 1; }
+  }
+
+  /* ── Trigger button ── */
+  .trigger-btn {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #fff;
+    font-size: 17px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    padding: 16px 40px;
+    border-radius: 100px;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: background 0.2s, transform 0.15s, box-shadow 0.3s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    outline: none;
+  }
+  .trigger-btn:hover { background: rgba(255,255,255,0.10); transform: scale(1.03); }
+  .trigger-btn:active { transform: scale(0.97); }
+  .trigger-btn.hidden { opacity: 0; pointer-events: none; transition: opacity 0.4s; }
+  .trigger-btn .mic-icon { font-size: 20px; }
+
+  /* ── Audio bar ring ── */
+  .audio-ring {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  body.speaking .audio-ring { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="aurora">
+  <div class="aurora-blob a1"></div>
+  <div class="aurora-blob a2"></div>
+</div>
+
+<div class="scene">
+  <div class="orb-wrap">
+    <div class="orb-glow"></div>
+    <div class="floor-light"></div>
+    <canvas id="c" width="300" height="300"></canvas>
+    <canvas id="audioRing" class="audio-ring" width="300" height="300"></canvas>
+  </div>
+
+  <div class="text-area">
+    <div class="state-label" id="stateLabel">Zuhören…</div>
+    <div class="thinking-dots"><span></span><span></span><span></span></div>
+    <div class="transcript" id="transcript"></div>
+    <div class="response" id="response"></div>
+  </div>
+
+  <button class="trigger-btn" id="triggerBtn" onclick="startSequence()">
+    <span class="mic-icon">🎙</span> Ok Nabu
+  </button>
+</div>
+
+<script>
+// ── Constants ──
+const STATES = {
+  IDLE:      { color: null },
+  LISTENING: { color: '#4CAF50', rings: 5, cycleMs: 1400, label: 'Zuhören…' },
+  THINKING:  { color: '#2196F3', rings: 3, cycleMs: 2200, label: 'Verarbeite…' },
+  SPEAKING:  { color: '#9C27B0', rings: 4, cycleMs: 1000, label: 'Antwortet…' },
+};
+
+const canvas   = document.getElementById('c');
+const ctx      = canvas.getContext('2d');
+const audioC   = document.getElementById('audioRing');
+const audioCtx = audioC.getContext('2d');
+const triggerBtn = document.getElementById('triggerBtn');
+const stateLabel = document.getElementById('stateLabel');
+const transcriptEl = document.getElementById('transcript');
+const responseEl   = document.getElementById('response');
+
+const SIZE = canvas.width;
+const CX = SIZE / 2, CY = SIZE / 2;
+const MAX_RADIUS = SIZE * 0.42;
+const DOT_RADIUS = SIZE * 0.09;
+
+// ── State ──
+let currentState = 'IDLE';
+let targetColor  = [76, 175, 80];   // current rendered color (RGB)
+let lerpColor    = [76, 175, 80];
+let animRunning  = false;
+let startTime    = 0;
+let sequenceTimer = null;
+
+// ── Particles ──
+let particles = [];
+function spawnParticles(color) {
+  const [r, g, b] = hexToRgb(color);
+  for (let i = 0; i < 24; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.8 + Math.random() * 3.2;
+    particles.push({
+      x: CX, y: CY,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 2 + Math.random() * 3,
+      alpha: 1,
+      decay: 0.018 + Math.random() * 0.012,
+      color: [r, g, b],
+    });
+  }
+}
+
+// ── Audio bar simulation ──
+const BAR_COUNT = 32;
+let barHeights = new Float32Array(BAR_COUNT).fill(0);
+let barTargets = new Float32Array(BAR_COUNT).fill(0);
+function updateBarTargets() {
+  for (let i = 0; i < BAR_COUNT; i++) {
+    barTargets[i] = Math.random() < 0.3
+      ? barTargets[i] * 0.5
+      : 0.15 + Math.abs(Math.sin(i * 0.4 + Date.now() * 0.003)) * 0.85;
+  }
+}
+setInterval(updateBarTargets, 120);
+
+// ── Helper ──
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return [r, g, b];
+}
+function lerp(a, b, t) { return a + (b - a) * t; }
+function lerpRgb(a, b, t) { return a.map((v, i) => Math.round(lerp(v, b[i], t))); }
+function rgbaStr(rgb, a) { return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`; }
+
+// ── Draw orb rings ──
+function drawRings(phase, ringCount, cycleMs, color) {
+  const strokeW = SIZE * 0.022;
+  for (let i = 0; i < ringCount; i++) {
+    const p = ((phase + i / ringCount) % 1);
+    const radius = DOT_RADIUS + p * (MAX_RADIUS - DOT_RADIUS);
+    const alpha  = (1 - p) * 0.85;
+    ctx.beginPath();
+    ctx.arc(CX, CY, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = rgbaStr(color, alpha);
+    ctx.lineWidth = strokeW;
+    ctx.stroke();
+  }
+}
+
+// ── Draw inner orb ──
+function drawOrb(pulse, color) {
+  const r = DOT_RADIUS * pulse;
+
+  // Outer glow fill
+  const grad = ctx.createRadialGradient(CX, CY, 0, CX, CY, r * 2.4);
+  grad.addColorStop(0,   rgbaStr(color, 0.35));
+  grad.addColorStop(0.5, rgbaStr(color, 0.12));
+  grad.addColorStop(1,   rgbaStr(color, 0));
+  ctx.beginPath();
+  ctx.arc(CX, CY, r * 2.4, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Core orb
+  const coreGrad = ctx.createRadialGradient(CX - r * 0.25, CY - r * 0.25, r * 0.05, CX, CY, r);
+  coreGrad.addColorStop(0,   'rgba(255,255,255,0.95)');
+  coreGrad.addColorStop(0.35, rgbaStr(color, 0.92));
+  coreGrad.addColorStop(1,   rgbaStr(color, 0.6));
+  ctx.beginPath();
+  ctx.arc(CX, CY, r, 0, Math.PI * 2);
+  ctx.fillStyle = coreGrad;
+  ctx.fill();
+
+  // Specular highlight
+  const hlGrad = ctx.createRadialGradient(CX - r * 0.3, CY - r * 0.3, 0, CX - r * 0.3, CY - r * 0.3, r * 0.55);
+  hlGrad.addColorStop(0, 'rgba(255,255,255,0.7)');
+  hlGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.beginPath();
+  ctx.arc(CX, CY, r, 0, Math.PI * 2);
+  ctx.fillStyle = hlGrad;
+  ctx.fill();
+}
+
+// ── Draw audio bars (SPEAKING) ──
+function drawAudioBars(color) {
+  audioCtx.clearRect(0, 0, SIZE, SIZE);
+  if (currentState !== 'SPEAKING') return;
+
+  const baseR = MAX_RADIUS + 8;
+  const maxBarH = 30;
+  const angleStep = (Math.PI * 2) / BAR_COUNT;
+
+  for (let i = 0; i < BAR_COUNT; i++) {
+    barHeights[i] = lerp(barHeights[i], barTargets[i], 0.12);
+    const h = barHeights[i] * maxBarH;
+    const angle = i * angleStep - Math.PI / 2;
+    const inner = baseR;
+    const outer = baseR + h;
+
+    const x1 = CX + Math.cos(angle) * inner;
+    const y1 = CY + Math.sin(angle) * inner;
+    const x2 = CX + Math.cos(angle) * outer;
+    const y2 = CY + Math.sin(angle) * outer;
+
+    audioCtx.beginPath();
+    audioCtx.moveTo(x1, y1);
+    audioCtx.lineTo(x2, y2);
+    audioCtx.strokeStyle = rgbaStr(color, 0.5 + barHeights[i] * 0.5);
+    audioCtx.lineWidth = 3;
+    audioCtx.lineCap = 'round';
+    audioCtx.stroke();
+  }
+}
+
+// ── Draw particles ──
+function drawParticles() {
+  particles = particles.filter(p => p.alpha > 0.01);
+  for (const p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.96;
+    p.vy *= 0.96;
+    p.alpha -= p.decay;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.alpha, 0, Math.PI * 2);
+    ctx.fillStyle = rgbaStr(p.color, p.alpha);
+    ctx.fill();
+  }
+}
+
+// ── Main loop ──
+function loop(ts) {
+  if (!animRunning) return;
+  const elapsed = ts - startTime;
+
+  ctx.clearRect(0, 0, SIZE, SIZE);
+
+  // Color lerp
+  if (currentState !== 'IDLE' && STATES[currentState].color) {
+    targetColor = hexToRgb(STATES[currentState].color);
+  }
+  lerpColor = lerpRgb(lerpColor, targetColor, 0.05);
+
+  const stateConf = STATES[currentState];
+  if (currentState !== 'IDLE') {
+    const phase = (elapsed % stateConf.cycleMs) / stateConf.cycleMs;
+    const pulse = 1 + 0.10 * Math.sin(elapsed / 400 * Math.PI);
+    drawRings(phase, stateConf.rings, stateConf.cycleMs, lerpColor);
+    drawOrb(pulse, lerpColor);
+    drawAudioBars(lerpColor);
+  }
+
+  drawParticles();
+  requestAnimationFrame(loop);
+}
+
+// ── Typewriter ──
+function typewrite(el, text, delay, perChar) {
+  return new Promise(resolve => {
+    setTimeout(() => {
+      el.classList.add('visible');
+      let i = 0;
+      el.textContent = '';
+      const iv = setInterval(() => {
+        el.textContent += text[i++];
+        if (i >= text.length) { clearInterval(iv); resolve(); }
+      }, perChar);
+    }, delay);
+  });
+}
+
+// ── Sequence ──
+async function startSequence() {
+  if (currentState !== 'IDLE') return;
+  triggerBtn.classList.add('hidden');
+  transcriptEl.classList.remove('visible');
+  responseEl.classList.remove('visible');
+  transcriptEl.textContent = '';
+  responseEl.textContent = '';
+
+  // Start animation loop
+  startTime = performance.now();
+  animRunning = true;
+  requestAnimationFrame(loop);
+
+  // LISTENING
+  setState('LISTENING');
+  spawnParticles('#4CAF50');
+  await sleep(3200);
+
+  // THINKING
+  setState('THINKING');
+  typewrite(transcriptEl, '"Licht Wohnzimmer an"', 200, 55);
+  await sleep(2800);
+
+  // SPEAKING
+  setState('SPEAKING');
+  typewrite(responseEl, 'Okay, schalte das Licht im Wohnzimmer ein.', 300, 30);
+  await sleep(3500);
+
+  // IDLE
+  setState('IDLE');
+  // Fade canvas via opacity
+  canvas.style.transition = 'opacity 0.6s ease';
+  canvas.style.opacity = '0';
+  document.body.classList.remove('active', 'listening', 'thinking', 'speaking');
+  stateLabel.textContent = '';
+
+  await sleep(700);
+  animRunning = false;
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  audioCtx.clearRect(0, 0, SIZE, SIZE);
+  canvas.style.opacity = '';
+  canvas.style.transition = '';
+
+  await sleep(200);
+  transcriptEl.classList.remove('visible');
+  responseEl.classList.remove('visible');
+  triggerBtn.classList.remove('hidden');
+}
+
+function setState(s) {
+  currentState = s;
+  document.body.className = s.toLowerCase();
+  if (s !== 'IDLE') document.body.classList.add('active');
+  stateLabel.textContent = STATES[s]?.label ?? '';
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
