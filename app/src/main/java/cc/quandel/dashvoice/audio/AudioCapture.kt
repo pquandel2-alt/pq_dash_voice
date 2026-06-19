@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import cc.quandel.dashvoice.util.AppLog as Log
 import kotlin.concurrent.thread
 
@@ -47,6 +48,10 @@ class AudioCapture(
         if (AcousticEchoCanceler.isAvailable()) {
             AcousticEchoCanceler.create(rec.audioSessionId)?.enabled = true
             Log.d(TAG, "AcousticEchoCanceler aktiviert")
+        }
+        if (NoiseSuppressor.isAvailable()) {
+            NoiseSuppressor.create(rec.audioSessionId)?.enabled = true
+            Log.d(TAG, "NoiseSuppressor aktiviert")
         }
         worker = thread(name = "audio-capture") {
             val buf = ShortArray(frameSamples)

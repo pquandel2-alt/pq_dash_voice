@@ -172,6 +172,9 @@ class MainActivity : AppCompatActivity() {
             voiceOverlay.visibility = View.GONE
             resetScreensaverTimer()
         }
+        VoiceEvents.onNetworkAvailable = {
+            webView.reload()
+        }
     }
 
     private fun setStatusDot(connected: Boolean) {
@@ -213,30 +216,32 @@ class MainActivity : AppCompatActivity() {
         val now = Date()
         clock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
         screensaverDate.text = SimpleDateFormat("EEEE, d. MMMM", Locale.GERMAN).format(now)
-        screensaver.visibility = View.VISIBLE
-        ui.post(tickClock)
 
         // Bildschirm auf ~3% dimmen
         val lp = window.attributes
         lp.screenBrightness = 0.03f
         window.attributes = lp
 
-        // Sensordaten starten
+        screensaver.alpha = 0f
+        screensaver.visibility = View.VISIBLE
+        screensaver.animate().alpha(1f).setDuration(600).start()
+
+        ui.post(tickClock)
         startSensorFetcher()
     }
 
     private fun dismissScreensaver() {
         ui.removeCallbacks(tickClock)
-        screensaver.visibility = View.GONE
         resetScreensaverTimer()
-
-        // Helligkeit zurücksetzen
-        val lp = window.attributes
-        lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-        window.attributes = lp
-
         sensorFetcher?.stop()
         sensorFetcher = null
+
+        screensaver.animate().alpha(0f).setDuration(400).withEndAction {
+            screensaver.visibility = View.GONE
+            val lp = window.attributes
+            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            window.attributes = lp
+        }.start()
     }
 
     private fun startSensorFetcher() {
@@ -341,6 +346,7 @@ class MainActivity : AppCompatActivity() {
         VoiceEvents.onIdle = null
         VoiceEvents.onConnected = null
         VoiceEvents.onDisconnected = null
+        VoiceEvents.onNetworkAvailable = null
         stopMicPulse()
         voiceAnimation.stopAnimation()
         sensorFetcher?.stop()

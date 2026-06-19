@@ -42,6 +42,7 @@ class WyomingServer(
 
     @Volatile private var serverSocket: ServerSocket? = null
     @Volatile private var clientOut: OutputStream? = null
+    @Volatile private var clientSocket: Socket? = null
     @Volatile private var running = false
     private var acceptThread: Thread? = null
 
@@ -77,6 +78,7 @@ class WyomingServer(
         } catch (_: Exception) {
         }
         val input = DataInputStream(sock.getInputStream().buffered())
+        clientSocket = sock
         clientOut = sock.getOutputStream().buffered()
         listener.onClientConnected()
         try {
@@ -88,6 +90,7 @@ class WyomingServer(
             Log.w(TAG, "client loop: ${e.message}")
         } finally {
             clientOut = null
+            clientSocket = null
             try {
                 sock.close()
             } catch (_: Exception) {
@@ -197,6 +200,16 @@ class WyomingServer(
     }
 
     fun sendPlayed() = send(WyomingEvent("played"))
+
+    fun sendPingOrKick() {
+        val out = clientOut ?: return
+        try {
+            WyomingEvent("ping").writeTo(out)
+        } catch (e: Exception) {
+            Log.w(TAG, "ping failed (${e.message}) — closing socket")
+            try { clientSocket?.close() } catch (_: Exception) {}
+        }
+    }
 
     fun stop() {
         running = false

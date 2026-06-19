@@ -64,7 +64,15 @@ class VoiceService : Service(), WyomingServer.Listener {
                     server.stop()
                     server.start()
                 }
+                VoiceEvents.onNetworkAvailable?.invoke()
             }
+        }
+    }
+
+    private val keepAlivePing = object : Runnable {
+        override fun run() {
+            if (server.isConnected) server.sendPingOrKick()
+            handler.postDelayed(this, PING_INTERVAL_MS)
         }
     }
 
@@ -96,6 +104,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
 
         capture.start { frame -> onAudioFrame(frame) }
+        handler.postDelayed(keepAlivePing, PING_INTERVAL_MS)
         Log.i(TAG, "started (wake=${if (wake.available) "openWakeWord" else "tap-to-talk"})")
     }
 
@@ -227,6 +236,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(keepAlivePing)
         capture.stop()
         player.stop()
         server.stop()
@@ -273,6 +283,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val NOTIF_ID = 1
         private const val MAX_STREAM_MS = 12000L
         private const val TTS_TIMEOUT_MS = 5000L
+        private const val PING_INTERVAL_MS = 30_000L
         const val ACTION_TALK = "cc.quandel.dashvoice.TALK"
 
         fun start(ctx: Context) {

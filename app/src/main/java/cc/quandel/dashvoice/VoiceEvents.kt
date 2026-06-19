@@ -11,4 +11,5 @@ object VoiceEvents {
     var onIdle: (() -> Unit)? = null
     var onConnected: (() -> Unit)? = null
     var onDisconnected: (() -> Unit)? = null
+    var onNetworkAvailable: (() -> Unit)? = null
 }
