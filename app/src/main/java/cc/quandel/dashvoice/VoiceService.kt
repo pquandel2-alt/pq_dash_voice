@@ -74,13 +74,6 @@ class VoiceService : Service(), WyomingServer.Listener {
         }
     }
 
-    private val keepAlivePing = object : Runnable {
-        override fun run() {
-            if (server.isConnected) server.sendPingOrKick()
-            handler.postDelayed(this, PING_INTERVAL_MS)
-        }
-    }
-
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
@@ -110,7 +103,8 @@ class VoiceService : Service(), WyomingServer.Listener {
         connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
 
         capture.start { frame -> onAudioFrame(frame) }
-        handler.postDelayed(keepAlivePing, PING_INTERVAL_MS)
+        // Kein eigener Keepalive-Ping: HA pingt selbst, wir ponten (auf dem Client-Thread).
+        // Ein ausgehender Ping vom Main-Thread warf NetworkOnMainThreadException und killte die Verbindung.
         Log.i(TAG, "started (wake=${if (wake.available) "openWakeWord" else "tap-to-talk"})")
     }
 
@@ -265,7 +259,6 @@ class VoiceService : Service(), WyomingServer.Listener {
     }
 
     override fun onDestroy() {
-        handler.removeCallbacks(keepAlivePing)
         capture.stop()
         player.stop()
         server.stop()
@@ -312,7 +305,6 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val NOTIF_ID = 1
         private const val MAX_STREAM_MS = 12000L
         private const val TTS_TIMEOUT_MS = 30000L
-        private const val PING_INTERVAL_MS = 30_000L
         private const val MIN_VAD_WAIT_MS = 1500L   // 1,5s Mindest-Streaming bevor VAD feuern darf
         private const val VAD_THRESHOLD = 500f      // RMS-Amplitude (0–32768); bei Problemen erhöhen
         private const val VAD_SILENCE_FRAMES = 12   // 12 × 80ms = 960ms Stille → audio-stop

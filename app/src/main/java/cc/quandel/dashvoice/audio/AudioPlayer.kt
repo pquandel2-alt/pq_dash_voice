@@ -51,9 +51,10 @@ class AudioPlayer {
     }
 
     /**
-     * Called when HA signals end of TTS audio (audio-stop). Uses a marker callback so the
-     * AudioTrack signals us exactly when all frames have been rendered to hardware, then
-     * waits for the hardware output buffer to drain before releasing.
+     * Called when HA signals end of TTS audio (audio-stop). Computes the exact remaining
+     * playback time from how many frames are still ahead of the playback head, lets STREAM
+     * mode drain, and releases once — no flaky marker callback. In MODE_STREAM the marker is
+     * often already passed by the time we get here, so it never fires; this is deterministic.
      */
     fun finishPlaying(handler: Handler, onDone: () -> Unit) {
         val t = track
@@ -74,32 +75,19 @@ class AudioPlayer {
             (m.invoke(t) as? Int) ?: 200
         } catch (_: Exception) { 200 }
 
-        Log.d(TAG, "finishing: ${writtenFrames} frames @${sampleRate}Hz, hwLatency~${hwLatencyMs}ms")
-
-        if (writtenFrames > 0) {
-            t.setNotificationMarkerPosition(writtenFrames)
-            t.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
-                override fun onMarkerReached(audioTrack: AudioTrack) {
-                    audioTrack.setPlaybackPositionUpdateListener(null)
-                    handler.postDelayed({ release() }, (hwLatencyMs + 100).toLong())
-                }
-                override fun onPeriodicNotification(audioTrack: AudioTrack) {}
-            }, handler)
+        // Frames still queued ahead of the playback head = what's left to play.
+        val remainingMs = try {
+            val head = t.playbackHeadPosition.toLong()
+            (writtenFrames - head).coerceAtLeast(0L) * 1000L / sampleRate
+        } catch (_: Exception) {
+            writtenFrames.toLong() * 1000L / sampleRate
         }
 
-        // Initiate drain: STREAM mode plays remaining buffer then stops.
-        try { t.stop() } catch (_: Exception) {}
+        Log.d(TAG, "finishing: ${writtenFrames} frames @${sampleRate}Hz, remaining~${remainingMs}ms, hwLatency~${hwLatencyMs}ms")
 
-        // Fallback in case the marker never fires.
-        val pendingMs = try {
-            val head = t.playbackHeadPosition.toLong()
-            ((writtenFrames - head).coerceAtLeast(0L) * 1000L / sampleRate)
-        } catch (_: Exception) { 2000L }
-        handler.postDelayed({
-            t.setPlaybackPositionUpdateListener(null)
-            Log.w(TAG, "TTS drain fallback nach ${pendingMs + hwLatencyMs + 1000L}ms")
-            release()
-        }, pendingMs + hwLatencyMs + 1000L)
+        // Let the already-written buffer drain to the speaker, then release exactly once.
+        try { t.stop() } catch (_: Exception) {}
+        handler.postDelayed({ release() }, remainingMs + hwLatencyMs + 80L)
     }
 
     fun stop() {

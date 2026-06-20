@@ -201,16 +201,6 @@ class WyomingServer(
 
     fun sendPlayed() = send(WyomingEvent("played"))
 
-    fun sendPingOrKick() {
-        val out = clientOut ?: return
-        try {
-            WyomingEvent("ping").writeTo(out)
-        } catch (e: Exception) {
-            Log.w(TAG, "ping failed (${e.message}) — closing socket")
-            try { clientSocket?.close() } catch (_: Exception) {}
-        }
-    }
-
     fun stop() {
         running = false
         try {
