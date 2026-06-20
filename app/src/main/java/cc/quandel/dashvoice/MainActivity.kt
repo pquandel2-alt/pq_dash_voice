@@ -92,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         voiceTranscriptText = findViewById(R.id.voiceTranscriptText)
         voiceResponseText   = findViewById(R.id.voiceResponseText)
         voiceAnimation      = findViewById(R.id.voiceAnimation)
+        voiceAnimation.style = prefs.animationStyle
 
         webView.settings.apply {
             javaScriptEnabled = true

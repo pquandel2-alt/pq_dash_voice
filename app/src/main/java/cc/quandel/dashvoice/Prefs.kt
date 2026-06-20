@@ -44,6 +44,10 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_TTS_VOLUME, 80)
         set(v) = sp.edit().putInt(KEY_TTS_VOLUME, v).apply()
 
+    var animationStyle: Int
+        get() = sp.getInt(KEY_ANIMATION_STYLE, 0)
+        set(v) = sp.edit().putInt(KEY_ANIMATION_STYLE, v).apply()
+
     companion object {
         const val DEFAULT_URL = "https://ha.quandel-home.cc"
         const val DEFAULT_PORT = 10700
@@ -60,5 +64,6 @@ class Prefs(context: Context) {
         private const val KEY_HA_TOKEN = "ha_token"
         private const val KEY_SCREENSAVER_SENSORS = "screensaver_sensors"
         private const val KEY_TTS_VOLUME = "tts_volume"
+        private const val KEY_ANIMATION_STYLE = "animation_style"
     }
 }

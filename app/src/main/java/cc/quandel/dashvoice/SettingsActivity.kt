@@ -60,6 +60,13 @@ class SettingsActivity : AppCompatActivity() {
         haToken.setText(prefs.haToken)
         sensors.setText(prefs.screensaverSensors)
 
+        // ── Animation style ──
+        val animSpinner = findViewById<Spinner>(R.id.animationStyle)
+        val animOptions = listOf("Ripple Orb", "Frequenz", "Neural", "Vortex", "Geometrie", "Aurora")
+        animSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, animOptions)
+            .also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        animSpinner.setSelection(prefs.animationStyle.coerceIn(0, animOptions.size - 1))
+
         // ── TTS volume seekbar ──
         val volumeLabel = findViewById<TextView>(R.id.ttsVolumeLabel)
         val volumeBar   = findViewById<SeekBar>(R.id.ttsVolume)
@@ -93,6 +100,7 @@ class SettingsActivity : AppCompatActivity() {
             prefs.haToken             = haToken.text.toString().trim()
             prefs.screensaverSensors  = sensors.text.toString().trim()
             prefs.ttsVolume           = volumeBar.progress
+            prefs.animationStyle      = animSpinner.selectedItemPosition
             Toast.makeText(this, "Gespeichert – App neu starten", Toast.LENGTH_LONG).show()
             finish()
         }

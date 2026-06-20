@@ -3,501 +3,761 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DashVoice — Ok Nabu</title>
+<title>DashVoice — Animation Showcase</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  body {
-    background: #0a0a0f;
-    color: #fff;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    overflow: hidden;
-    user-select: none;
-  }
+:root {
+  --c-listen: #4CAF50;
+  --c-think:  #2196F3;
+  --c-speak:  #9C27B0;
+  --bg: #0a0a0f;
+}
 
-  /* ── Background aurora ── */
-  .aurora {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    overflow: hidden;
-  }
-  .aurora-blob {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(80px);
-    opacity: 0;
-    transition: opacity 1.2s ease, background 0.8s ease;
-  }
-  .aurora-blob.a1 { width: 600px; height: 600px; top: -200px; left: -200px; }
-  .aurora-blob.a2 { width: 500px; height: 500px; bottom: -150px; right: -150px; }
-  body.listening .aurora-blob { opacity: 0.12; background: #4CAF50; }
-  body.thinking  .aurora-blob.a1 { opacity: 0.10; background: #2196F3; }
-  body.thinking  .aurora-blob.a2 { opacity: 0.10; background: #03A9F4; }
-  body.speaking  .aurora-blob { opacity: 0.14; background: #9C27B0; }
+body {
+  background: var(--bg);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-x: hidden;
+}
 
-  /* ── Main layout ── */
-  .scene {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 32px;
-  }
+/* ── Header ── */
+header {
+  width: 100%;
+  padding: 24px 32px 0;
+  text-align: center;
+}
+header h1 { font-size: 22px; font-weight: 600; letter-spacing: 0.05em; color: rgba(255,255,255,0.85); }
+header p  { font-size: 13px; color: rgba(255,255,255,0.35); margin-top: 4px; }
 
-  /* ── Orb container ── */
-  .orb-wrap {
-    position: relative;
-    width: min(300px, 70vw);
-    height: min(300px, 70vw);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
+/* ── Tab nav ── */
+nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 20px 16px 0;
+}
+nav button {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.55);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 8px 18px;
+  border-radius: 100px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+nav button:hover { background: rgba(255,255,255,0.12); color: #fff; }
+nav button.active {
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.3);
+  color: #fff;
+}
 
-  /* Floor light */
-  .floor-light {
-    position: absolute;
-    bottom: -40px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 160px;
-    height: 40px;
-    border-radius: 50%;
-    filter: blur(24px);
-    opacity: 0;
-    transition: opacity 0.6s ease, background 0.6s ease;
-    pointer-events: none;
-  }
-  body.listening .floor-light { opacity: 0.55; background: #4CAF50; }
-  body.thinking  .floor-light { opacity: 0.45; background: #2196F3; }
-  body.speaking  .floor-light { opacity: 0.65; background: #9C27B0; }
+/* ── Stage ── */
+.stage {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  height: 380px;
+  margin: 24px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+canvas#main {
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 480px;
+  height: 380px;
+}
 
-  /* CSS glow ring around canvas */
-  .orb-glow {
-    position: absolute;
-    inset: -20px;
-    border-radius: 50%;
-    opacity: 0;
-    transition: opacity 0.6s ease, box-shadow 0.6s ease;
-    pointer-events: none;
-  }
-  body.listening .orb-glow { opacity: 1; box-shadow: 0 0 60px 20px rgba(76,175,80,0.25); }
-  body.thinking  .orb-glow { opacity: 1; box-shadow: 0 0 60px 20px rgba(33,150,243,0.25); }
-  body.speaking  .orb-glow { opacity: 1; box-shadow: 0 0 80px 30px rgba(156,39,176,0.30); }
+/* ── State bar ── */
+.state-bar {
+  position: absolute;
+  bottom: -8px;
+  left: 50%; transform: translateX(-50%);
+  display: flex; gap: 16px;
+  align-items: center;
+}
+.state-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  opacity: 0.3; transition: opacity 0.3s, transform 0.3s;
+}
+.state-dot.active { opacity: 1; transform: scale(1.4); }
+#dotListen { background: var(--c-listen); }
+#dotThink  { background: var(--c-think); }
+#dotSpeak  { background: var(--c-speak); }
 
-  canvas {
-    position: relative;
-    z-index: 2;
-    opacity: 0;
-    transition: opacity 0.6s ease;
-    border-radius: 50%;
-  }
-  body.active canvas { opacity: 1; }
+/* ── Info ── */
+.info {
+  text-align: center;
+  min-height: 56px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.info-label { font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: rgba(255,255,255,0.3); }
+.info-text  { font-size: 16px; color: rgba(255,255,255,0.75); min-height: 24px; }
+.info-sub   { font-size: 13px; color: rgba(255,255,255,0.35); min-height: 20px; }
 
-  /* ── Text area ── */
-  .text-area {
-    text-align: center;
-    min-height: 80px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .state-label {
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    opacity: 0;
-    transition: opacity 0.4s ease, color 0.4s ease;
-    color: #888;
-  }
-  body.listening .state-label { opacity: 1; color: #4CAF50; }
-  body.thinking  .state-label { opacity: 1; color: #2196F3; }
-  body.speaking  .state-label { opacity: 1; color: #CE93D8; }
-
-  .transcript {
-    font-size: 18px;
-    font-weight: 500;
-    color: rgba(255,255,255,0.9);
-    min-height: 28px;
-    opacity: 0;
-    transition: opacity 0.5s ease;
-  }
-  .transcript.visible { opacity: 1; }
-
-  .response {
-    font-size: 15px;
-    color: rgba(255,255,255,0.55);
-    min-height: 24px;
-    opacity: 0;
-    transition: opacity 0.5s ease;
-    max-width: 340px;
-  }
-  .response.visible { opacity: 1; }
-
-  /* Thinking dots */
-  .thinking-dots {
-    display: none;
-    gap: 6px;
-    align-items: center;
-    height: 28px;
-  }
-  body.thinking .thinking-dots { display: flex; }
-  .thinking-dots span {
-    display: block;
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: #2196F3;
-    animation: dotBounce 1.2s infinite ease-in-out;
-  }
-  .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
-  .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
-  @keyframes dotBounce {
-    0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
-    40%           { transform: scale(1.2); opacity: 1; }
-  }
-
-  /* ── Trigger button ── */
-  .trigger-btn {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
-    color: #fff;
-    font-size: 17px;
-    font-weight: 500;
-    letter-spacing: 0.06em;
-    padding: 16px 40px;
-    border-radius: 100px;
-    cursor: pointer;
-    backdrop-filter: blur(8px);
-    transition: background 0.2s, transform 0.15s, box-shadow 0.3s;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    outline: none;
-  }
-  .trigger-btn:hover { background: rgba(255,255,255,0.10); transform: scale(1.03); }
-  .trigger-btn:active { transform: scale(0.97); }
-  .trigger-btn.hidden { opacity: 0; pointer-events: none; transition: opacity 0.4s; }
-  .trigger-btn .mic-icon { font-size: 20px; }
-
-  /* ── Audio bar ring ── */
-  .audio-ring {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.5s ease;
-  }
-  body.speaking .audio-ring { opacity: 1; }
+/* ── Trigger ── */
+.trigger-wrap { padding: 8px 0 40px; }
+.trigger-btn {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.9);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  padding: 14px 44px;
+  border-radius: 100px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex; align-items: center; gap: 10px;
+}
+.trigger-btn:hover:not(:disabled) { background: rgba(255,255,255,0.13); transform: scale(1.04); }
+.trigger-btn:disabled { opacity: 0.35; cursor: default; }
 </style>
 </head>
 <body>
 
-<div class="aurora">
-  <div class="aurora-blob a1"></div>
-  <div class="aurora-blob a2"></div>
+<header>
+  <h1>🎙 DashVoice — Animationen</h1>
+  <p>Klicke eine Variante, dann „Ok Nabu" um die Sequenz zu starten</p>
+</header>
+
+<nav id="nav"></nav>
+
+<div class="stage">
+  <canvas id="main" width="480" height="380"></canvas>
+  <div class="state-bar">
+    <div class="state-dot" id="dotListen"></div>
+    <div class="state-dot" id="dotThink"></div>
+    <div class="state-dot" id="dotSpeak"></div>
+  </div>
 </div>
 
-<div class="scene">
-  <div class="orb-wrap">
-    <div class="orb-glow"></div>
-    <div class="floor-light"></div>
-    <canvas id="c" width="300" height="300"></canvas>
-    <canvas id="audioRing" class="audio-ring" width="300" height="300"></canvas>
-  </div>
+<div class="info">
+  <div class="info-label" id="infoLabel"></div>
+  <div class="info-text"  id="infoText"></div>
+  <div class="info-sub"   id="infoSub"></div>
+</div>
 
-  <div class="text-area">
-    <div class="state-label" id="stateLabel">Zuhören…</div>
-    <div class="thinking-dots"><span></span><span></span><span></span></div>
-    <div class="transcript" id="transcript"></div>
-    <div class="response" id="response"></div>
-  </div>
-
-  <button class="trigger-btn" id="triggerBtn" onclick="startSequence()">
-    <span class="mic-icon">🎙</span> Ok Nabu
-  </button>
+<div class="trigger-wrap">
+  <button class="trigger-btn" id="triggerBtn" onclick="trigger()">🎙 Ok Nabu</button>
 </div>
 
 <script>
-// ── Constants ──
-const STATES = {
-  IDLE:      { color: null },
-  LISTENING: { color: '#4CAF50', rings: 5, cycleMs: 1400, label: 'Zuhören…' },
-  THINKING:  { color: '#2196F3', rings: 3, cycleMs: 2200, label: 'Verarbeite…' },
-  SPEAKING:  { color: '#9C27B0', rings: 4, cycleMs: 1000, label: 'Antwortet…' },
+// ═══════════════════════════════════════════════════
+//  SHARED INFRASTRUCTURE
+// ═══════════════════════════════════════════════════
+const C = document.getElementById('main');
+const X = C.getContext('2d');
+const W = C.width, H = C.height, CX = W/2, CY = H/2;
+
+const COL = {
+  IDLE:      null,
+  LISTENING: [76,175,80],
+  THINKING:  [33,150,243],
+  SPEAKING:  [156,39,176],
 };
 
-const canvas   = document.getElementById('c');
-const ctx      = canvas.getContext('2d');
-const audioC   = document.getElementById('audioRing');
-const audioCtx = audioC.getContext('2d');
-const triggerBtn = document.getElementById('triggerBtn');
-const stateLabel = document.getElementById('stateLabel');
-const transcriptEl = document.getElementById('transcript');
-const responseEl   = document.getElementById('response');
+let curState = 'IDLE';
+let lerpRGB  = [76,175,80];
+let animId   = null;
+let running  = false;
+let seqTimer = [];
+let currentDemo = 0;
 
-const SIZE = canvas.width;
-const CX = SIZE / 2, CY = SIZE / 2;
-const MAX_RADIUS = SIZE * 0.42;
-const DOT_RADIUS = SIZE * 0.09;
+function lerp(a,b,t){ return a+(b-a)*t; }
+function lerpV(a,b,t){ return a.map((v,i)=>lerp(v,b[i],t)); }
+function rgb(c,a=1){ return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+function h2r(h){ return [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)]; }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
-// ── State ──
-let currentState = 'IDLE';
-let targetColor  = [76, 175, 80];   // current rendered color (RGB)
-let lerpColor    = [76, 175, 80];
-let animRunning  = false;
-let startTime    = 0;
-let sequenceTimer = null;
-
-// ── Particles ──
-let particles = [];
-function spawnParticles(color) {
-  const [r, g, b] = hexToRgb(color);
-  for (let i = 0; i < 24; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 1.8 + Math.random() * 3.2;
-    particles.push({
-      x: CX, y: CY,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      r: 2 + Math.random() * 3,
-      alpha: 1,
-      decay: 0.018 + Math.random() * 0.012,
-      color: [r, g, b],
-    });
-  }
+function setState(s){
+  curState = s;
+  document.getElementById('dotListen').className = 'state-dot' + (s==='LISTENING'?' active':'');
+  document.getElementById('dotThink' ).className = 'state-dot' + (s==='THINKING' ?' active':'');
+  document.getElementById('dotSpeak' ).className = 'state-dot' + (s==='SPEAKING' ?' active':'');
+  const labels = {IDLE:'',LISTENING:'Zuhören…',THINKING:'Verarbeite…',SPEAKING:'Antwortet…'};
+  document.getElementById('infoLabel').textContent = labels[s] || '';
 }
 
-// ── Audio bar simulation ──
-const BAR_COUNT = 32;
-let barHeights = new Float32Array(BAR_COUNT).fill(0);
-let barTargets = new Float32Array(BAR_COUNT).fill(0);
-function updateBarTargets() {
-  for (let i = 0; i < BAR_COUNT; i++) {
-    barTargets[i] = Math.random() < 0.3
-      ? barTargets[i] * 0.5
-      : 0.15 + Math.abs(Math.sin(i * 0.4 + Date.now() * 0.003)) * 0.85;
-  }
-}
-setInterval(updateBarTargets, 120);
+async function trigger(){
+  if(running) return;
+  running = true;
+  document.getElementById('triggerBtn').disabled = true;
+  document.getElementById('infoText').textContent = '';
+  document.getElementById('infoSub').textContent = '';
 
-// ── Helper ──
-function hexToRgb(hex) {
-  const r = parseInt(hex.slice(1,3),16);
-  const g = parseInt(hex.slice(3,5),16);
-  const b = parseInt(hex.slice(5,7),16);
-  return [r, g, b];
-}
-function lerp(a, b, t) { return a + (b - a) * t; }
-function lerpRgb(a, b, t) { return a.map((v, i) => Math.round(lerp(v, b[i], t))); }
-function rgbaStr(rgb, a) { return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`; }
-
-// ── Draw orb rings ──
-function drawRings(phase, ringCount, cycleMs, color) {
-  const strokeW = SIZE * 0.022;
-  for (let i = 0; i < ringCount; i++) {
-    const p = ((phase + i / ringCount) % 1);
-    const radius = DOT_RADIUS + p * (MAX_RADIUS - DOT_RADIUS);
-    const alpha  = (1 - p) * 0.85;
-    ctx.beginPath();
-    ctx.arc(CX, CY, radius, 0, Math.PI * 2);
-    ctx.strokeStyle = rgbaStr(color, alpha);
-    ctx.lineWidth = strokeW;
-    ctx.stroke();
-  }
-}
-
-// ── Draw inner orb ──
-function drawOrb(pulse, color) {
-  const r = DOT_RADIUS * pulse;
-
-  // Outer glow fill
-  const grad = ctx.createRadialGradient(CX, CY, 0, CX, CY, r * 2.4);
-  grad.addColorStop(0,   rgbaStr(color, 0.35));
-  grad.addColorStop(0.5, rgbaStr(color, 0.12));
-  grad.addColorStop(1,   rgbaStr(color, 0));
-  ctx.beginPath();
-  ctx.arc(CX, CY, r * 2.4, 0, Math.PI * 2);
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  // Core orb
-  const coreGrad = ctx.createRadialGradient(CX - r * 0.25, CY - r * 0.25, r * 0.05, CX, CY, r);
-  coreGrad.addColorStop(0,   'rgba(255,255,255,0.95)');
-  coreGrad.addColorStop(0.35, rgbaStr(color, 0.92));
-  coreGrad.addColorStop(1,   rgbaStr(color, 0.6));
-  ctx.beginPath();
-  ctx.arc(CX, CY, r, 0, Math.PI * 2);
-  ctx.fillStyle = coreGrad;
-  ctx.fill();
-
-  // Specular highlight
-  const hlGrad = ctx.createRadialGradient(CX - r * 0.3, CY - r * 0.3, 0, CX - r * 0.3, CY - r * 0.3, r * 0.55);
-  hlGrad.addColorStop(0, 'rgba(255,255,255,0.7)');
-  hlGrad.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.beginPath();
-  ctx.arc(CX, CY, r, 0, Math.PI * 2);
-  ctx.fillStyle = hlGrad;
-  ctx.fill();
-}
-
-// ── Draw audio bars (SPEAKING) ──
-function drawAudioBars(color) {
-  audioCtx.clearRect(0, 0, SIZE, SIZE);
-  if (currentState !== 'SPEAKING') return;
-
-  const baseR = MAX_RADIUS + 8;
-  const maxBarH = 30;
-  const angleStep = (Math.PI * 2) / BAR_COUNT;
-
-  for (let i = 0; i < BAR_COUNT; i++) {
-    barHeights[i] = lerp(barHeights[i], barTargets[i], 0.12);
-    const h = barHeights[i] * maxBarH;
-    const angle = i * angleStep - Math.PI / 2;
-    const inner = baseR;
-    const outer = baseR + h;
-
-    const x1 = CX + Math.cos(angle) * inner;
-    const y1 = CY + Math.sin(angle) * inner;
-    const x2 = CX + Math.cos(angle) * outer;
-    const y2 = CY + Math.sin(angle) * outer;
-
-    audioCtx.beginPath();
-    audioCtx.moveTo(x1, y1);
-    audioCtx.lineTo(x2, y2);
-    audioCtx.strokeStyle = rgbaStr(color, 0.5 + barHeights[i] * 0.5);
-    audioCtx.lineWidth = 3;
-    audioCtx.lineCap = 'round';
-    audioCtx.stroke();
-  }
-}
-
-// ── Draw particles ──
-function drawParticles() {
-  particles = particles.filter(p => p.alpha > 0.01);
-  for (const p of particles) {
-    p.x += p.vx;
-    p.y += p.vy;
-    p.vx *= 0.96;
-    p.vy *= 0.96;
-    p.alpha -= p.decay;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.r * p.alpha, 0, Math.PI * 2);
-    ctx.fillStyle = rgbaStr(p.color, p.alpha);
-    ctx.fill();
-  }
-}
-
-// ── Main loop ──
-function loop(ts) {
-  if (!animRunning) return;
-  const elapsed = ts - startTime;
-
-  ctx.clearRect(0, 0, SIZE, SIZE);
-
-  // Color lerp
-  if (currentState !== 'IDLE' && STATES[currentState].color) {
-    targetColor = hexToRgb(STATES[currentState].color);
-  }
-  lerpColor = lerpRgb(lerpColor, targetColor, 0.05);
-
-  const stateConf = STATES[currentState];
-  if (currentState !== 'IDLE') {
-    const phase = (elapsed % stateConf.cycleMs) / stateConf.cycleMs;
-    const pulse = 1 + 0.10 * Math.sin(elapsed / 400 * Math.PI);
-    drawRings(phase, stateConf.rings, stateConf.cycleMs, lerpColor);
-    drawOrb(pulse, lerpColor);
-    drawAudioBars(lerpColor);
-  }
-
-  drawParticles();
-  requestAnimationFrame(loop);
-}
-
-// ── Typewriter ──
-function typewrite(el, text, delay, perChar) {
-  return new Promise(resolve => {
-    setTimeout(() => {
-      el.classList.add('visible');
-      let i = 0;
-      el.textContent = '';
-      const iv = setInterval(() => {
-        el.textContent += text[i++];
-        if (i >= text.length) { clearInterval(iv); resolve(); }
-      }, perChar);
-    }, delay);
-  });
-}
-
-// ── Sequence ──
-async function startSequence() {
-  if (currentState !== 'IDLE') return;
-  triggerBtn.classList.add('hidden');
-  transcriptEl.classList.remove('visible');
-  responseEl.classList.remove('visible');
-  transcriptEl.textContent = '';
-  responseEl.textContent = '';
-
-  // Start animation loop
-  startTime = performance.now();
-  animRunning = true;
-  requestAnimationFrame(loop);
-
-  // LISTENING
+  DEMOS[currentDemo].onStateChange?.('LISTENING');
   setState('LISTENING');
-  spawnParticles('#4CAF50');
+  await sleep(3000);
+
+  DEMOS[currentDemo].onStateChange?.('THINKING');
+  setState('THINKING');
+  typewrite('infoText','"Licht Wohnzimmer an"',40);
+  await sleep(2500);
+
+  DEMOS[currentDemo].onStateChange?.('SPEAKING');
+  setState('SPEAKING');
+  typewrite('infoSub','Okay, das Licht wird eingeschaltet.',25);
   await sleep(3200);
 
-  // THINKING
-  setState('THINKING');
-  typewrite(transcriptEl, '"Licht Wohnzimmer an"', 200, 55);
-  await sleep(2800);
-
-  // SPEAKING
-  setState('SPEAKING');
-  typewrite(responseEl, 'Okay, schalte das Licht im Wohnzimmer ein.', 300, 30);
-  await sleep(3500);
-
-  // IDLE
+  DEMOS[currentDemo].onStateChange?.('IDLE');
   setState('IDLE');
-  // Fade canvas via opacity
-  canvas.style.transition = 'opacity 0.6s ease';
-  canvas.style.opacity = '0';
-  document.body.classList.remove('active', 'listening', 'thinking', 'speaking');
-  stateLabel.textContent = '';
-
-  await sleep(700);
-  animRunning = false;
-  ctx.clearRect(0, 0, SIZE, SIZE);
-  audioCtx.clearRect(0, 0, SIZE, SIZE);
-  canvas.style.opacity = '';
-  canvas.style.transition = '';
-
-  await sleep(200);
-  transcriptEl.classList.remove('visible');
-  responseEl.classList.remove('visible');
-  triggerBtn.classList.remove('hidden');
+  document.getElementById('infoLabel').textContent = '';
+  await sleep(600);
+  document.getElementById('infoText').textContent = '';
+  document.getElementById('infoSub').textContent = '';
+  running = false;
+  document.getElementById('triggerBtn').disabled = false;
 }
 
-function setState(s) {
-  currentState = s;
-  document.body.className = s.toLowerCase();
-  if (s !== 'IDLE') document.body.classList.add('active');
-  stateLabel.textContent = STATES[s]?.label ?? '';
+function typewrite(id, text, ms){
+  const el = document.getElementById(id);
+  el.textContent = ''; let i=0;
+  const iv = setInterval(()=>{ el.textContent += text[i++]; if(i>=text.length) clearInterval(iv); }, ms);
 }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function stopAnim(){ if(animId){ cancelAnimationFrame(animId); animId=null; } }
+function startLoop(fn){
+  stopAnim();
+  const loop = (ts)=>{ fn(ts); animId = requestAnimationFrame(loop); };
+  animId = requestAnimationFrame(loop);
+}
+
+function switchDemo(idx){
+  stopAnim();
+  setState('IDLE');
+  running = false;
+  document.getElementById('triggerBtn').disabled = false;
+  document.getElementById('infoText').textContent = '';
+  document.getElementById('infoSub').textContent = '';
+  document.getElementById('infoLabel').textContent = '';
+  X.clearRect(0,0,W,H);
+  currentDemo = idx;
+  document.querySelectorAll('nav button').forEach((b,i)=>b.classList.toggle('active',i===idx));
+  DEMOS[idx].init();
+}
+
+
+// ═══════════════════════════════════════════════════
+//  DEMO 1 — RIPPLE ORB
+// ═══════════════════════════════════════════════════
+const demoOrb = (()=>{
+  let particles=[], t0=0;
+  const DOT=70, MAX=160;
+
+  function spawn(col){
+    for(let i=0;i<22;i++){
+      const a=Math.random()*Math.PI*2, sp=2+Math.random()*4;
+      particles.push({x:CX,y:CY,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:2+Math.random()*3,a:1,d:0.02+Math.random()*0.012,col});
+    }
+  }
+
+  function draw(ts){
+    const dt = ts-t0;
+    X.clearRect(0,0,W,H);
+    const col = COL[curState]||COL.LISTENING;
+    lerpRGB = lerpV(lerpRGB, col, 0.06);
+    const c = lerpRGB;
+
+    if(curState!=='IDLE'){
+      const cycleMs = curState==='SPEAKING'?900:curState==='THINKING'?2000:1400;
+      const rings   = curState==='SPEAKING'?4:curState==='THINKING'?3:5;
+      const phase   = (dt%cycleMs)/cycleMs;
+      const sw = 5;
+      for(let i=0;i<rings;i++){
+        const p=((phase+i/rings)%1);
+        const r=DOT+p*(MAX-DOT);
+        X.beginPath(); X.arc(CX,CY,r,0,Math.PI*2);
+        X.strokeStyle=rgb(c,(1-p)*0.8); X.lineWidth=sw; X.stroke();
+      }
+      const pulse=1+0.1*Math.sin(dt/400*Math.PI);
+      // glow
+      const g1=X.createRadialGradient(CX,CY,0,CX,CY,DOT*pulse*2.5);
+      g1.addColorStop(0,rgb(c,0.3)); g1.addColorStop(1,rgb(c,0));
+      X.beginPath(); X.arc(CX,CY,DOT*pulse*2.5,0,Math.PI*2); X.fillStyle=g1; X.fill();
+      // core
+      const g2=X.createRadialGradient(CX-DOT*.25,CY-DOT*.25,2,CX,CY,DOT*pulse);
+      g2.addColorStop(0,'rgba(255,255,255,0.95)');
+      g2.addColorStop(0.4,rgb(c,0.9));
+      g2.addColorStop(1,rgb(c,0.5));
+      X.beginPath(); X.arc(CX,CY,DOT*pulse,0,Math.PI*2); X.fillStyle=g2; X.fill();
+    }
+
+    particles = particles.filter(p=>p.a>0.01);
+    for(const p of particles){
+      p.x+=p.vx; p.y+=p.vy; p.vx*=0.95; p.vy*=0.95; p.a-=p.d;
+      X.beginPath(); X.arc(p.x,p.y,p.r*p.a,0,Math.PI*2);
+      X.fillStyle=rgb(p.col,p.a); X.fill();
+    }
+  }
+
+  return {
+    init(){ t0=performance.now(); particles=[]; startLoop(ts=>draw(ts)); },
+    onStateChange(s){
+      if(s==='LISTENING') spawn(COL.LISTENING);
+      if(s==='SPEAKING')  spawn(COL.SPEAKING);
+      if(s==='IDLE') t0=performance.now();
+    }
+  };
+})();
+
+
+// ═══════════════════════════════════════════════════
+//  DEMO 2 — FREQUENCY RING (Equalizer)
+// ═══════════════════════════════════════════════════
+const demoFreq = (()=>{
+  const N=64;
+  let heights=new Float32Array(N), targets=new Float32Array(N), phase=0;
+  let iv=null;
+
+  function updateTargets(){
+    const intensity = curState==='SPEAKING'?1:curState==='LISTENING'?0.5:curState==='THINKING'?0.2:0.05;
+    for(let i=0;i<N;i++){
+      targets[i] = Math.random()<0.25
+        ? targets[i]*0.3
+        : intensity*(0.1+Math.abs(Math.sin(i*0.35+phase))*0.9);
+    }
+    phase+=0.18;
+  }
+
+  function draw(ts){
+    X.clearRect(0,0,W,H);
+    const col = COL[curState]||[50,50,50];
+    lerpRGB = lerpV(lerpRGB, col, 0.07);
+    const c = lerpRGB;
+
+    const baseR=90, maxBar=80, angle=Math.PI*2/N;
+
+    // Center label ring
+    if(curState!=='IDLE'){
+      const g=X.createRadialGradient(CX,CY,0,CX,CY,baseR);
+      g.addColorStop(0,rgb(c,0.18)); g.addColorStop(1,rgb(c,0));
+      X.beginPath(); X.arc(CX,CY,baseR,0,Math.PI*2); X.fillStyle=g; X.fill();
+      // inner dot
+      X.beginPath(); X.arc(CX,CY,28,0,Math.PI*2);
+      const gc=X.createRadialGradient(CX-8,CY-8,2,CX,CY,28);
+      gc.addColorStop(0,'rgba(255,255,255,0.9)'); gc.addColorStop(1,rgb(c,0.7));
+      X.fillStyle=gc; X.fill();
+    }
+
+    for(let i=0;i<N;i++){
+      heights[i]=lerp(heights[i],targets[i],0.14);
+      const h=heights[i]*maxBar;
+      const a=i*angle-Math.PI/2;
+      const x1=CX+Math.cos(a)*baseR, y1=CY+Math.sin(a)*baseR;
+      const x2=CX+Math.cos(a)*(baseR+h), y2=CY+Math.sin(a)*(baseR+h);
+      X.beginPath(); X.moveTo(x1,y1); X.lineTo(x2,y2);
+      const alpha=0.4+heights[i]*0.6;
+      X.strokeStyle=rgb(c,alpha); X.lineWidth=3.5; X.lineCap='round'; X.stroke();
+    }
+  }
+
+  return {
+    init(){
+      heights.fill(0); targets.fill(0); phase=0;
+      if(iv) clearInterval(iv);
+      iv=setInterval(updateTargets,100);
+      startLoop(draw);
+    },
+    onStateChange(){}
+  };
+})();
+
+
+// ═══════════════════════════════════════════════════
+//  DEMO 3 — NEURAL NETWORK
+// ═══════════════════════════════════════════════════
+const demoNeural = (()=>{
+  const NODES=22;
+  let nodes=[], pulses=[], t0=0;
+
+  function makeNodes(){
+    nodes=[];
+    // center
+    nodes.push({x:CX,y:CY,r:12,layer:0});
+    // ring 1
+    for(let i=0;i<6;i++){
+      const a=i/6*Math.PI*2;
+      nodes.push({x:CX+Math.cos(a)*90,y:CY+Math.sin(a)*90,r:8,layer:1});
+    }
+    // ring 2
+    for(let i=0;i<10;i++){
+      const a=i/10*Math.PI*2+0.3;
+      nodes.push({x:CX+Math.cos(a)*165,y:CY+Math.sin(a)*165,r:6,layer:2});
+    }
+    // outer stragglers
+    for(let i=0;i<5;i++){
+      const a=i/5*Math.PI*2+0.7;
+      nodes.push({x:CX+Math.cos(a)*200+Math.random()*20-10,
+                  y:CY+Math.sin(a)*180+Math.random()*20-10,r:4,layer:3});
+    }
+    // build connections
+    nodes.forEach((n,i)=>{
+      n.connections=[];
+      nodes.forEach((m,j)=>{
+        if(i===j) return;
+        const d=Math.hypot(n.x-m.x,n.y-m.y);
+        if(d<120 && Math.abs(n.layer-m.layer)<=1) n.connections.push(j);
+      });
+    });
+  }
+
+  function spawnPulse(col){
+    if(!nodes.length) return;
+    const from=Math.floor(Math.random()*nodes.length);
+    const n=nodes[from];
+    if(!n.connections.length) return;
+    const to=n.connections[Math.floor(Math.random()*n.connections.length)];
+    pulses.push({from,to,t:0,speed:0.025+Math.random()*0.02,col,alpha:1});
+  }
+
+  function draw(ts){
+    X.clearRect(0,0,W,H);
+    const col = COL[curState]||[40,40,40];
+    lerpRGB = lerpV(lerpRGB,col,0.05);
+    const c=lerpRGB;
+    const active = curState!=='IDLE';
+
+    // edges
+    nodes.forEach((n,i)=>{
+      n.connections.forEach(j=>{
+        const m=nodes[j];
+        X.beginPath(); X.moveTo(n.x,n.y); X.lineTo(m.x,m.y);
+        X.strokeStyle=rgb(c,active?0.12:0.05); X.lineWidth=1; X.stroke();
+      });
+    });
+
+    // pulses
+    pulses=pulses.filter(p=>p.t<1&&p.alpha>0.02);
+    for(const p of pulses){
+      p.t+=p.speed;
+      p.alpha=Math.sin(p.t*Math.PI);
+      const a=nodes[p.from], b=nodes[p.to];
+      const px=lerp(a.x,b.x,p.t), py=lerp(a.y,b.y,p.t);
+      X.beginPath(); X.arc(px,py,4,0,Math.PI*2);
+      X.fillStyle=rgb(p.col,p.alpha*0.9); X.fill();
+      // trail
+      X.beginPath(); X.arc(px,py,8,0,Math.PI*2);
+      X.fillStyle=rgb(p.col,p.alpha*0.25); X.fill();
+    }
+
+    // nodes
+    nodes.forEach((n,i)=>{
+      const glow = X.createRadialGradient(n.x,n.y,0,n.x,n.y,n.r*2.5);
+      glow.addColorStop(0,rgb(c,active?0.35:0.1)); glow.addColorStop(1,rgb(c,0));
+      X.beginPath(); X.arc(n.x,n.y,n.r*2.5,0,Math.PI*2); X.fillStyle=glow; X.fill();
+      X.beginPath(); X.arc(n.x,n.y,n.r,0,Math.PI*2);
+      const ng=X.createRadialGradient(n.x-n.r*.3,n.y-n.r*.3,1,n.x,n.y,n.r);
+      ng.addColorStop(0,'rgba(255,255,255,'+(active?'0.9':'0.3')+')');
+      ng.addColorStop(1,rgb(c,active?0.7:0.2));
+      X.fillStyle=ng; X.fill();
+    });
+  }
+
+  let piv=null;
+  return {
+    init(){
+      makeNodes(); pulses=[];
+      if(piv) clearInterval(piv);
+      piv=setInterval(()=>{ if(curState!=='IDLE') spawnPulse(COL[curState]||COL.LISTENING); },140);
+      startLoop(draw);
+    },
+    onStateChange(s){ if(s==='LISTENING'||s==='SPEAKING') for(let i=0;i<6;i++) spawnPulse(COL[s]); }
+  };
+})();
+
+
+// ═══════════════════════════════════════════════════
+//  DEMO 4 — PARTICLE VORTEX
+// ═══════════════════════════════════════════════════
+const demoVortex = (()=>{
+  const N=180;
+  let pts=[];
+
+  function reset(){
+    pts=[];
+    for(let i=0;i<N;i++){
+      const a=Math.random()*Math.PI*2;
+      const r=60+Math.random()*160;
+      pts.push({
+        x:CX+Math.cos(a)*r, y:CY+Math.sin(a)*r,
+        baseA:a, baseR:r,
+        speed:0.004+Math.random()*0.006,
+        offset:Math.random()*Math.PI*2,
+        size:1+Math.random()*2.5,
+        alpha:0.3+Math.random()*0.5,
+      });
+    }
+  }
+
+  function draw(ts){
+    X.clearRect(0,0,W,H);
+    X.fillStyle='rgba(10,10,15,0.18)'; X.fillRect(0,0,W,H);
+    const col=COL[curState]||[50,50,50];
+    lerpRGB=lerpV(lerpRGB,col,0.06);
+    const c=lerpRGB;
+    const t=ts/1000;
+    const active=curState!=='IDLE';
+
+    // Vortex factor per state
+    const swirl   = curState==='LISTENING'?1.2:curState==='THINKING'?0.3:curState==='SPEAKING'?2.2:0.4;
+    const inward  = curState==='THINKING'?0.98:1.0;
+    const scatter  = curState==='SPEAKING'?0.012:0;
+
+    for(const p of pts){
+      p.baseA += p.speed * swirl;
+      p.baseR  = lerp(p.baseR, p.baseR*inward + (scatter*(Math.random()-0.5)*60), 0.05);
+      if(p.baseR<20) p.baseR=20+Math.random()*40;
+
+      const wobble = curState==='SPEAKING' ? Math.sin(t*3+p.offset)*15 : 0;
+      const px=CX+Math.cos(p.baseA)*(p.baseR+wobble);
+      const py=CY+Math.sin(p.baseA)*(p.baseR+wobble)*0.85;
+
+      const fade=active?Math.min(1,p.alpha*1.6):p.alpha*0.3;
+      X.beginPath(); X.arc(px,py,p.size,0,Math.PI*2);
+      X.fillStyle=rgb(c,fade); X.fill();
+    }
+
+    if(active){
+      // core
+      const g=X.createRadialGradient(CX,CY,0,CX,CY,45);
+      g.addColorStop(0,rgb(c,0.5)); g.addColorStop(0.5,rgb(c,0.12)); g.addColorStop(1,rgb(c,0));
+      X.beginPath(); X.arc(CX,CY,45,0,Math.PI*2); X.fillStyle=g; X.fill();
+      X.beginPath(); X.arc(CX,CY,18,0,Math.PI*2);
+      const gc=X.createRadialGradient(CX-5,CY-5,1,CX,CY,18);
+      gc.addColorStop(0,'rgba(255,255,255,0.95)'); gc.addColorStop(1,rgb(c,0.8));
+      X.fillStyle=gc; X.fill();
+    }
+  }
+
+  return { init(){ reset(); startLoop(draw); }, onStateChange(){} };
+})();
+
+
+// ═══════════════════════════════════════════════════
+//  DEMO 5 — MORPHING GEOMETRY
+// ═══════════════════════════════════════════════════
+const demoGeo = (()=>{
+  // Get N-gon vertices normalized
+  function polygon(n, r, cx, cy, offset=0){
+    return Array.from({length:n},(_,i)=>{
+      const a=i/n*Math.PI*2+offset-Math.PI/2;
+      return [cx+Math.cos(a)*r, cy+Math.sin(a)*r];
+    });
+  }
+
+  // Resample to fixed number of points for morphing
+  const STEPS=120;
+  function resample(pts){
+    const out=[];
+    for(let i=0;i<STEPS;i++){
+      const t=i/STEPS*pts.length;
+      const a=Math.floor(t)%pts.length, b=(a+1)%pts.length;
+      const f=t-Math.floor(t);
+      out.push([lerp(pts[a][0],pts[b][0],f), lerp(pts[a][1],pts[b][1],f)]);
+    }
+    return out;
+  }
+
+  const shapes={
+    TRI:  resample(polygon(3,130,CX,CY)),
+    HEX:  resample(polygon(6,130,CX,CY,Math.PI/6)),
+    OCT:  resample(polygon(8,130,CX,CY)),
+    CIRC: resample(Array.from({length:STEPS},(_,i)=>{const a=i/STEPS*Math.PI*2; return [CX+Math.cos(a)*130,CY+Math.sin(a)*130];})),
+  };
+
+  let current=shapes.TRI, target=shapes.TRI, morphT=1, rot=0;
+
+  const stateShapes={IDLE:'TRI',LISTENING:'HEX',THINKING:'CIRC',SPEAKING:'OCT'};
+
+  function draw(ts){
+    X.clearRect(0,0,W,H);
+    const col=COL[curState]||[40,40,40];
+    lerpRGB=lerpV(lerpRGB,col,0.05);
+    const c=lerpRGB;
+    const active=curState!=='IDLE';
+
+    morphT=Math.min(1,morphT+0.025);
+    rot += curState==='THINKING'?0.003:curState==='SPEAKING'?0.015:0.008;
+
+    // Blend current→target
+    const pts=current.map((p,i)=>[lerp(p[0],target[i][0],morphT),lerp(p[1],target[i][1],morphT)]);
+
+    // Rotate around center
+    const rotPts=pts.map(([x,y])=>{
+      const dx=x-CX,dy=y-CY;
+      return [CX+dx*Math.cos(rot)-dy*Math.sin(rot), CY+dx*Math.sin(rot)+dy*Math.cos(rot)];
+    });
+
+    // Outer glow fill
+    if(active){
+      X.beginPath(); X.moveTo(rotPts[0][0],rotPts[0][1]);
+      rotPts.forEach(p=>X.lineTo(p[0],p[1])); X.closePath();
+      X.fillStyle=rgb(c,0.08); X.fill();
+    }
+
+    // Draw layers
+    for(let layer=0;layer<3;layer++){
+      const scale=1-layer*0.08;
+      const a=active?[0.9,0.5,0.2][layer]:[0.15,0.08,0.04][layer];
+      X.beginPath();
+      rotPts.forEach((p,i)=>{
+        const sx=CX+(p[0]-CX)*scale, sy=CY+(p[1]-CY)*scale;
+        i===0?X.moveTo(sx,sy):X.lineTo(sx,sy);
+      });
+      X.closePath();
+      X.strokeStyle=rgb(c,a); X.lineWidth=[3,1.5,0.8][layer]; X.stroke();
+    }
+
+    // Vertices glow dots
+    if(active){
+      const step=Math.floor(STEPS/12);
+      for(let i=0;i<STEPS;i+=step){
+        const p=rotPts[i];
+        X.beginPath(); X.arc(p[0],p[1],4,0,Math.PI*2);
+        X.fillStyle=rgb(c,0.8); X.fill();
+        X.beginPath(); X.arc(p[0],p[1],8,0,Math.PI*2);
+        X.fillStyle=rgb(c,0.2); X.fill();
+      }
+    }
+
+    // Center
+    if(active){
+      X.beginPath(); X.arc(CX,CY,22,0,Math.PI*2);
+      const gc=X.createRadialGradient(CX-6,CY-6,1,CX,CY,22);
+      gc.addColorStop(0,'rgba(255,255,255,0.95)'); gc.addColorStop(1,rgb(c,0.7));
+      X.fillStyle=gc; X.fill();
+    }
+  }
+
+  return {
+    init(){ current=shapes.TRI; target=shapes.TRI; morphT=1; rot=0; startLoop(draw); },
+    onStateChange(s){
+      current=current.map((p,i)=>[lerp(p[0],target[i][0],morphT),lerp(p[1],target[i][1],morphT)]);
+      target=shapes[stateShapes[s]||'TRI']; morphT=0;
+    }
+  };
+})();
+
+
+// ═══════════════════════════════════════════════════
+//  DEMO 6 — AURORA PLASMA
+// ═══════════════════════════════════════════════════
+const demoAurora = (()=>{
+  function plasma(x,y,t,freq){
+    return (Math.sin(x*freq+t) + Math.sin(y*freq+t*1.3) +
+            Math.sin((x+y)*freq*0.7+t*0.8) + Math.sin(Math.hypot(x-CX,y-CY)*freq*0.5+t*1.1))/4;
+  }
+
+  // Offscreen image data for plasma
+  const OFF=new OffscreenCanvas(W,H);
+  const OX=OFF.getContext('2d');
+  const imgData=OX.createImageData(W,H);
+  const px=imgData.data;
+
+  const palettes={
+    LISTENING: [[20,200,80],[50,255,120],[10,150,60]],
+    THINKING:  [[20,100,255],[60,160,255],[0,60,200]],
+    SPEAKING:  [[180,30,220],[230,80,255],[120,0,180]],
+    IDLE:      [[20,20,40],[30,30,60],[15,15,30]],
+  };
+
+  function blendPal(a,b,t){ return a.map((v,i)=>Math.round(lerp(v,b[i],t))); }
+
+  let curPal=palettes.IDLE, tgtPal=palettes.IDLE, palT=1;
+
+  function draw(ts){
+    const t=ts/1200;
+    curPal=curPal.map((v,i)=>blendPal(v,tgtPal[i],Math.min(1,palT+=0.02)));
+    const freq = curState==='SPEAKING'?0.025:curState==='THINKING'?0.012:0.018;
+
+    // Downsample 4x for performance
+    const S=4;
+    for(let y=0;y<H;y+=S){
+      for(let x=0;x<W;x+=S){
+        const v=(plasma(x,y,t,freq)+1)/2;
+        const v2=(plasma(x,y,t*0.7+1,freq*1.4)+1)/2;
+        const c1=curPal[0], c2=curPal[1], c3=curPal[2];
+        const r=Math.round(lerp(c1[0],c2[0],v)*0.6+c3[0]*v2*0.4);
+        const g=Math.round(lerp(c1[1],c2[1],v)*0.6+c3[1]*v2*0.4);
+        const b=Math.round(lerp(c1[2],c2[2],v)*0.6+c3[2]*v2*0.4);
+        for(let dy=0;dy<S&&y+dy<H;dy++){
+          for(let dx=0;dx<S&&x+dx<W;dx++){
+            const i=((y+dy)*W+(x+dx))*4;
+            px[i]=r; px[i+1]=g; px[i+2]=b; px[i+3]=255;
+          }
+        }
+      }
+    }
+    OX.putImageData(imgData,0,0);
+
+    X.clearRect(0,0,W,H);
+    X.drawImage(OFF,0,0);
+
+    // Vignette
+    const vig=X.createRadialGradient(CX,CY,80,CX,CY,W*0.62);
+    vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,0.72)');
+    X.fillStyle=vig; X.fillRect(0,0,W,H);
+
+    // Center orb
+    if(curState!=='IDLE'){
+      const col=COL[curState]||COL.LISTENING;
+      const pulse=1+0.08*Math.sin(ts/350);
+      const g=X.createRadialGradient(CX,CY,0,CX,CY,55*pulse);
+      g.addColorStop(0,'rgba(255,255,255,0.95)');
+      g.addColorStop(0.4,rgb(col,0.8));
+      g.addColorStop(1,rgb(col,0));
+      X.beginPath(); X.arc(CX,CY,55*pulse,0,Math.PI*2); X.fillStyle=g; X.fill();
+    }
+  }
+
+  return {
+    init(){ palT=1; startLoop(draw); },
+    onStateChange(s){ tgtPal=palettes[s]||palettes.IDLE; palT=0; }
+  };
+})();
+
+
+// ═══════════════════════════════════════════════════
+//  DEMO REGISTRY
+// ═══════════════════════════════════════════════════
+const DEMOS = [
+  { name: '✦ Ripple Orb',   emoji:'✦', ...demoOrb },
+  { name: '≋ Frequenz',     emoji:'≋', ...demoFreq },
+  { name: '⬡ Neural',       emoji:'⬡', ...demoNeural },
+  { name: '⟳ Vortex',      emoji:'⟳', ...demoVortex },
+  { name: '◈ Geometrie',    emoji:'◈', ...demoGeo },
+  { name: '~ Aurora',       emoji:'~', ...demoAurora },
+];
+
+// Build nav
+const nav = document.getElementById('nav');
+DEMOS.forEach((d,i)=>{
+  const b=document.createElement('button');
+  b.textContent=d.name;
+  b.onclick=()=>switchDemo(i);
+  nav.appendChild(b);
+});
+
+// Start first
+switchDemo(0);
 </script>
 </body>
 </html>
