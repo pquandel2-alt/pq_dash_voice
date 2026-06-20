@@ -254,7 +254,10 @@ class VoiceService : Service(), WyomingServer.Listener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_TALK) triggerPipeline()
+        // Off-Main-Thread: triggerPipeline macht Socket-I/O (sendRunPipeline/Detection/AudioStart).
+        // Der Wake-Word-Pfad läuft auf dem Capture-Thread; Tap-to-Talk/ACTION_TALK kommt vom Main-Thread
+        // und würde sonst NetworkOnMainThreadException werfen. @Synchronized macht den Aufruf thread-safe.
+        if (intent?.action == ACTION_TALK) Thread { triggerPipeline() }.start()
         return START_STICKY
     }
 
