@@ -3,6 +3,7 @@ package cc.quandel.dashvoice.util
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -16,11 +17,18 @@ import java.util.Locale
 object AppLog {
     private const val MAX = 300
     private val buffer = ArrayDeque<String>()
-    private val fmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    private val fmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
     private val main = Handler(Looper.getMainLooper())
+    @Volatile private var logFile: File? = null
 
     /** Set by the UI to be notified of new lines (invoked on the main thread). */
     @Volatile var listener: (() -> Unit)? = null
+
+    fun initFileLog(dir: File) {
+        val f = File(dir, "dashvoice_debug.log")
+        f.writeText("--- Log start ${fmt.format(Date())} ---\n")
+        logFile = f
+    }
 
     fun i(tag: String, msg: String): Int { Log.i(tag, msg); return add("I", tag, msg) }
     fun w(tag: String, msg: String): Int { Log.w(tag, msg); return add("W", tag, msg) }
@@ -41,6 +49,7 @@ object AppLog {
             buffer.addLast(line)
             while (buffer.size > MAX) buffer.removeFirst()
         }
+        try { logFile?.appendText(line + "\n") } catch (_: Exception) {}
         main.post { listener?.invoke() }
         return 0
     }

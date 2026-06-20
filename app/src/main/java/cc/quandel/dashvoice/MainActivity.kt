@@ -6,6 +6,8 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -145,10 +147,13 @@ class MainActivity : AppCompatActivity() {
             voiceTranscriptText.text = ""
             voiceResponseText.text = ""
             voiceStateText.text = "Zuhören…"
+            voiceOverlay.animate().cancel()
+            voiceOverlay.alpha = 1f
             voiceOverlay.visibility = View.VISIBLE
             startMicPulse()
             voiceAnimation.setState(VoiceAnimationView.State.LISTENING)
             voiceAnimation.startAnimation()
+            setWebViewBlur(true)
         }
         VoiceEvents.onTranscript = { text ->
             if (text.isNotEmpty()) {
@@ -170,7 +175,16 @@ class MainActivity : AppCompatActivity() {
         VoiceEvents.onIdle = {
             stopMicPulse()
             voiceAnimation.stopAnimation()
-            voiceOverlay.visibility = View.GONE
+            setWebViewBlur(false)
+            voiceOverlay.animate()
+                .alpha(0f)
+                .setStartDelay(2000)
+                .setDuration(500)
+                .withEndAction {
+                    voiceOverlay.visibility = View.GONE
+                    voiceOverlay.alpha = 1f
+                }
+                .start()
             resetScreensaverTimer()
         }
         VoiceEvents.onNetworkAvailable = {
@@ -183,6 +197,15 @@ class MainActivity : AppCompatActivity() {
         statusDot.background?.let {
             (it as? android.graphics.drawable.GradientDrawable)?.setColor(color)
         } ?: statusDot.setBackgroundColor(color)
+    }
+
+    private fun setWebViewBlur(blur: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            webView.setRenderEffect(
+                if (blur) RenderEffect.createBlurEffect(20f, 20f, Shader.TileMode.CLAMP)
+                else null
+            )
+        }
     }
 
     private fun startMicPulse() {

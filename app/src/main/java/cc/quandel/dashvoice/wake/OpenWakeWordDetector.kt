@@ -152,9 +152,9 @@ class OpenWakeWordDetector(
     }
 
     override fun reset() {
-        melBuffer.clear()
-        embBuffer.clear()
+        lastFire = System.currentTimeMillis()
         melFramesSinceEmb = 0
+        embBuffer.clear()  // alte Embeddings löschen — verhindert Sofort-Trigger nach TTS
     }
 
     override fun close() {

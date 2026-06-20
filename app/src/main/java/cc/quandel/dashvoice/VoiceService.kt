@@ -35,6 +35,9 @@ class VoiceService : Service(), WyomingServer.Listener {
     @Volatile private var state = State.IDLE
     @Volatile private var satelliteActive = false
     private var streamStartedAt = 0L
+    private var lastTtsEndedAt = 0L
+    private var vadSilenceFrames = 0
+    private var vadHadSpeech = false
 
     private lateinit var prefs: Prefs
     private lateinit var capture: AudioCapture
@@ -51,6 +54,8 @@ class VoiceService : Service(), WyomingServer.Listener {
         if (state == State.SPEAKING) {
             Log.w(TAG, "TTS-Timeout → reset IDLE")
             abandonTtsFocus()
+            lastTtsEndedAt = System.currentTimeMillis()
+            wake.reset()
             state = State.IDLE
             VoiceEvents.onIdle?.invoke()
         }
@@ -79,6 +84,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
+        Log.initFileLog(getExternalFilesDir(null) ?: filesDir)
         startForegroundWithNotification()
         acquireWakeLock()
 
@@ -111,11 +117,14 @@ class VoiceService : Service(), WyomingServer.Listener {
     private fun onAudioFrame(frame: ShortArray) {
         when (state) {
             State.IDLE ->
-                if (satelliteActive && server.isConnected && wake.available && wake.accept(frame)) {
+                if (satelliteActive && server.isConnected && wake.available
+                    && System.currentTimeMillis() - lastTtsEndedAt > TTS_WAKEWORD_COOLDOWN_MS
+                    && wake.accept(frame)) {
                     triggerPipeline()
                 }
             State.STREAMING -> {
                 server.sendAudioChunk(shortsToBytes(frame))
+                detectSilence(frame)
                 if (System.currentTimeMillis() - streamStartedAt > MAX_STREAM_MS) endStreaming()
             }
             State.SPEAKING -> { /* ignore mic during playback */ }
@@ -127,6 +136,8 @@ class VoiceService : Service(), WyomingServer.Listener {
         if (state != State.IDLE || !server.isConnected) return
         Log.i(TAG, "trigger -> pipeline")
         wake.reset()
+        vadSilenceFrames = 0
+        vadHadSpeech = false
         server.sendRunPipeline()
         server.sendDetection(prefs.wakeWord)
         server.sendAudioStart()
@@ -161,6 +172,22 @@ class VoiceService : Service(), WyomingServer.Listener {
     private fun abandonTtsFocus() {
         audioFocusReq?.let { audioManager.abandonAudioFocusRequest(it) }
         audioFocusReq = null
+    }
+
+    private fun detectSilence(frame: ShortArray) {
+        if (System.currentTimeMillis() - streamStartedAt < MIN_VAD_WAIT_MS) return
+        var sum = 0L
+        for (s in frame) sum += s.toLong() * s
+        val rms = Math.sqrt(sum.toDouble() / frame.size).toFloat()
+        if (rms >= VAD_THRESHOLD) {
+            vadHadSpeech = true
+            vadSilenceFrames = 0
+        } else if (vadHadSpeech) {
+            if (++vadSilenceFrames >= VAD_SILENCE_FRAMES) {
+                Log.d(TAG, "lokale VAD: Stille erkannt (rms=$rms) → endStreaming")
+                endStreaming()
+            }
+        }
     }
 
     private fun shortsToBytes(s: ShortArray): ByteArray {
@@ -218,9 +245,11 @@ class VoiceService : Service(), WyomingServer.Listener {
         player.finishPlaying(handler) {
             Log.i(TAG, "TTS fertig -> played")
             abandonTtsFocus()
-            server.sendPlayed()
+            lastTtsEndedAt = System.currentTimeMillis()
+            wake.reset()
             state = State.IDLE
             VoiceEvents.onIdle?.invoke()
+            Thread { server.sendPlayed() }.start()
         }
     }
 
@@ -282,8 +311,12 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val CHANNEL = "dashvoice"
         private const val NOTIF_ID = 1
         private const val MAX_STREAM_MS = 12000L
-        private const val TTS_TIMEOUT_MS = 5000L
+        private const val TTS_TIMEOUT_MS = 30000L
         private const val PING_INTERVAL_MS = 30_000L
+        private const val MIN_VAD_WAIT_MS = 1500L   // 1,5s Mindest-Streaming bevor VAD feuern darf
+        private const val VAD_THRESHOLD = 500f      // RMS-Amplitude (0–32768); bei Problemen erhöhen
+        private const val VAD_SILENCE_FRAMES = 12   // 12 × 80ms = 960ms Stille → audio-stop
+        private const val TTS_WAKEWORD_COOLDOWN_MS = 2000L  // 2s Sperrzeit nach TTS-Ende gegen Echo-Trigger
         const val ACTION_TALK = "cc.quandel.dashvoice.TALK"
 
         fun start(ctx: Context) {

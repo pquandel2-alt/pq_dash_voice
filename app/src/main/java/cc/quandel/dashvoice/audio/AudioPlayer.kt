@@ -51,28 +51,55 @@ class AudioPlayer {
     }
 
     /**
-     * Called when HA signals end of TTS audio (audio-stop). Lets the AudioTrack drain
-     * all buffered samples before releasing — prevents the tail being cut off.
-     * Calls [onDone] on the main thread once playback is truly finished.
+     * Called when HA signals end of TTS audio (audio-stop). Uses a marker callback so the
+     * AudioTrack signals us exactly when all frames have been rendered to hardware, then
+     * waits for the hardware output buffer to drain before releasing.
      */
     fun finishPlaying(handler: Handler, onDone: () -> Unit) {
         val t = track
         if (t == null) { onDone(); return }
-        try { t.stop() } catch (_: Exception) {}
-        // Estimate how many ms of audio are still in the hardware buffer.
-        val drainMs = try {
-            val writtenSamples = (bytesWritten / (channels * 2)).toLong()
-            val playedSamples = t.playbackHeadPosition.toLong()
-            val pendingSamples = (writtenSamples - playedSamples).coerceAtLeast(0L)
-            (pendingSamples * 1000L / sampleRate).coerceAtMost(4000L)
-        } catch (_: Exception) { 300L }
-        Log.d(TAG, "drain ~${drainMs + 250}ms (wrote ${bytesWritten}B)")
-        handler.postDelayed({
+
+        val writtenFrames = (bytesWritten / (channels * 2)).toInt()
+        var done = false
+        fun release() {
+            if (done) return; done = true
             try { t.release() } catch (_: Exception) {}
-            track = null
-            bytesWritten = 0
+            track = null; bytesWritten = 0
             onDone()
-        }, drainMs + 250L)
+        }
+
+        // Hardware output latency via hidden API (widely available, falls back to 200ms).
+        val hwLatencyMs = try {
+            val m = AudioTrack::class.java.getMethod("getLatency")
+            (m.invoke(t) as? Int) ?: 200
+        } catch (_: Exception) { 200 }
+
+        Log.d(TAG, "finishing: ${writtenFrames} frames @${sampleRate}Hz, hwLatency~${hwLatencyMs}ms")
+
+        if (writtenFrames > 0) {
+            t.setNotificationMarkerPosition(writtenFrames)
+            t.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
+                override fun onMarkerReached(audioTrack: AudioTrack) {
+                    audioTrack.setPlaybackPositionUpdateListener(null)
+                    handler.postDelayed({ release() }, (hwLatencyMs + 100).toLong())
+                }
+                override fun onPeriodicNotification(audioTrack: AudioTrack) {}
+            }, handler)
+        }
+
+        // Initiate drain: STREAM mode plays remaining buffer then stops.
+        try { t.stop() } catch (_: Exception) {}
+
+        // Fallback in case the marker never fires.
+        val pendingMs = try {
+            val head = t.playbackHeadPosition.toLong()
+            ((writtenFrames - head).coerceAtLeast(0L) * 1000L / sampleRate)
+        } catch (_: Exception) { 2000L }
+        handler.postDelayed({
+            t.setPlaybackPositionUpdateListener(null)
+            Log.w(TAG, "TTS drain fallback nach ${pendingMs + hwLatencyMs + 1000L}ms")
+            release()
+        }, pendingMs + hwLatencyMs + 1000L)
     }
 
     fun stop() {
