@@ -74,6 +74,21 @@ class VoiceService : Service(), WyomingServer.Listener {
         }
     }
 
+    private val watchdog = object : Runnable {
+        override fun run() {
+            try {
+                if (!server.isListening) {
+                    Log.w(TAG, "Watchdog: Wyoming-Server lauscht nicht — Neustart")
+                    server.stop()
+                    server.start()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Watchdog-Fehler: ${e.message}")
+            }
+            handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
@@ -105,6 +120,8 @@ class VoiceService : Service(), WyomingServer.Listener {
         capture.start { frame -> onAudioFrame(frame) }
         // Kein eigener Keepalive-Ping: HA pingt selbst, wir ponten (auf dem Client-Thread).
         // Ein ausgehender Ping vom Main-Thread warf NetworkOnMainThreadException und killte die Verbindung.
+        handler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
+        RestartReceiver.schedule(this)
         Log.i(TAG, "started (wake=${if (wake.available) "openWakeWord" else "tap-to-talk"})")
     }
 
@@ -262,6 +279,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(watchdog)
         capture.stop()
         player.stop()
         server.stop()
@@ -308,6 +326,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val NOTIF_ID = 1
         private const val MAX_STREAM_MS = 12000L
         private const val TTS_TIMEOUT_MS = 30000L
+        private const val WATCHDOG_INTERVAL_MS = 60_000L  // Server-Selbstheilung: alle 60s prüfen
         private const val MIN_VAD_WAIT_MS = 1500L   // 1,5s Mindest-Streaming bevor VAD feuern darf
         private const val VAD_THRESHOLD = 500f      // RMS-Amplitude (0–32768); bei Problemen erhöhen
         private const val VAD_SILENCE_FRAMES = 12   // 12 × 80ms = 960ms Stille → audio-stop

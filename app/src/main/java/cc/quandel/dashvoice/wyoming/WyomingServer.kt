@@ -48,6 +48,9 @@ class WyomingServer(
 
     val isConnected: Boolean get() = clientOut != null
 
+    /** True solange der Server-Socket lebt und der Accept-Loop laufen soll (für den Watchdog). */
+    val isListening: Boolean get() = running && serverSocket?.isClosed == false
+
     fun start() {
         if (running) return
         running = true

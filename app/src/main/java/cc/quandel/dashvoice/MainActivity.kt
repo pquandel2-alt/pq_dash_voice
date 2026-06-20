@@ -62,6 +62,13 @@ class MainActivity : AppCompatActivity() {
     private val ui = Handler(Looper.getMainLooper())
 
     private val showSaver = Runnable { showScreensaver() }
+    private val periodicReload = object : Runnable {
+        override fun run() {
+            AppLog.i("UI", "Periodischer WebView-Reload (Stabilität)")
+            webView.reload()
+            ui.postDelayed(this, WEBVIEW_RELOAD_MS)
+        }
+    }
     private val tickClock = object : Runnable {
         override fun run() {
             val now = Date()
@@ -131,6 +138,11 @@ class MainActivity : AppCompatActivity() {
         AppLog.i("UI", "MainActivity gestartet – Dashboard=${prefs.dashboardUrl}")
         VoiceService.start(this)
         resetScreensaverTimer()
+        ui.postDelayed(periodicReload, WEBVIEW_RELOAD_MS)
+    }
+
+    companion object {
+        private const val WEBVIEW_RELOAD_MS = 6L * 60 * 60 * 1000  // alle 6h Dashboard neu laden
     }
 
     private fun subscribeVoiceEvents() {
