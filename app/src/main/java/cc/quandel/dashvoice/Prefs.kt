@@ -48,12 +48,27 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_ANIMATION_STYLE, 0)
         set(v) = sp.edit().putInt(KEY_ANIMATION_STYLE, v).apply()
 
+    /** On-Device-Sofortbefehle (Vosk, an Whisper vorbei). */
+    var instantCommandsEnabled: Boolean
+        get() = sp.getBoolean(KEY_INSTANT_CMD, true)
+        set(v) = sp.edit().putBoolean(KEY_INSTANT_CMD, v).apply()
+
+    /** Befehls-Verben: enthält das Vosk-Transkript eines davon → lokaler Befehlspfad. Komma-getrennt. */
+    var commandVerbs: List<String>
+        get() = (sp.getString(KEY_CMD_VERBS, DEFAULT_CMD_VERBS) ?: DEFAULT_CMD_VERBS)
+            .split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        set(v) = sp.edit().putString(KEY_CMD_VERBS, v.joinToString(",")).apply()
+
     companion object {
         const val DEFAULT_URL = "https://ha.quandel-home.cc"
         const val DEFAULT_PORT = 10700
         const val DEFAULT_NAME = "Wand-Tablet"
         const val DEFAULT_WAKE = "ok_nabu"
         const val DEFAULT_SCREENSAVER_DELAY = 120_000L
+        // Befehls-Verben (de). Bewusst eher spezifisch, um Fragen nicht fälschlich als Befehl zu werten.
+        const val DEFAULT_CMD_VERBS =
+            "schalt,einschalt,ausschalt,mach an,mach aus,aktivier,starte,start ,stoppe,stopp," +
+            "dimm,öffne,schließe,fahr,runterfahren,hochfahren,herunterfahren,heize,stelle"
 
         private const val KEY_URL = "url"
         private const val KEY_PORT = "port"
@@ -65,5 +80,7 @@ class Prefs(context: Context) {
         private const val KEY_SCREENSAVER_SENSORS = "screensaver_sensors"
         private const val KEY_TTS_VOLUME = "tts_volume"
         private const val KEY_ANIMATION_STYLE = "animation_style"
+        private const val KEY_INSTANT_CMD = "instant_commands"
+        private const val KEY_CMD_VERBS = "command_verbs"
     }
 }

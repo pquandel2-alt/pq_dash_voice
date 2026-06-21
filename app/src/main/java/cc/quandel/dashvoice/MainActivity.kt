@@ -184,6 +184,26 @@ class MainActivity : AppCompatActivity() {
             voiceStateText.text = "Antwortet…"
             voiceAnimation.setState(VoiceAnimationView.State.SPEAKING)
         }
+        VoiceEvents.onCommandDone = { _ ->
+            // Sofortbefehl ausgeführt: grüne „Erledigt"-Animation kurz zeigen, dann ausblenden (stumm).
+            stopMicPulse()
+            voiceTranscriptText.visibility = View.GONE
+            voiceResponseText.visibility = View.GONE
+            voiceStateText.text = "✓ Erledigt"
+            voiceAnimation.setState(VoiceAnimationView.State.DONE)
+            setWebViewBlur(false)
+            voiceOverlay.animate()
+                .alpha(0f)
+                .setStartDelay(1200)
+                .setDuration(450)
+                .withEndAction {
+                    voiceAnimation.stopAnimation()
+                    voiceOverlay.visibility = View.GONE
+                    voiceOverlay.alpha = 1f
+                }
+                .start()
+            resetScreensaverTimer()
+        }
         VoiceEvents.onIdle = {
             stopMicPulse()
             voiceAnimation.stopAnimation()
@@ -379,6 +399,7 @@ class MainActivity : AppCompatActivity() {
         VoiceEvents.onWake = null
         VoiceEvents.onTranscript = null
         VoiceEvents.onResponse = null
+        VoiceEvents.onCommandDone = null
         VoiceEvents.onIdle = null
         VoiceEvents.onConnected = null
         VoiceEvents.onDisconnected = null

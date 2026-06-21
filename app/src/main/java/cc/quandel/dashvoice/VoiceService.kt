@@ -21,6 +21,7 @@ import androidx.core.app.NotificationCompat
 import cc.quandel.dashvoice.util.AppLog as Log
 import cc.quandel.dashvoice.audio.AudioCapture
 import cc.quandel.dashvoice.audio.AudioPlayer
+import cc.quandel.dashvoice.wake.LocalRecognizer
 import cc.quandel.dashvoice.wake.NoopWakeWordDetector
 import cc.quandel.dashvoice.wake.OpenWakeWordDetector
 import cc.quandel.dashvoice.wake.WakeWordDetector
@@ -30,7 +31,7 @@ import java.nio.ByteOrder
 
 class VoiceService : Service(), WyomingServer.Listener {
 
-    private enum class State { IDLE, STREAMING, SPEAKING }
+    private enum class State { IDLE, RECOGNIZING, STREAMING, SPEAKING }
 
     @Volatile private var state = State.IDLE
     @Volatile private var satelliteActive = false
@@ -38,6 +39,10 @@ class VoiceService : Service(), WyomingServer.Listener {
     private var lastTtsEndedAt = 0L
     private var vadSilenceFrames = 0
     private var vadHadSpeech = false
+
+    // On-Device-Sofortbefehle (Vosk): puffert das Audio während RECOGNIZING für ggf. Fallback an HA.
+    @Volatile private var local: LocalRecognizer? = null
+    private val bufferedFrames = ArrayList<ShortArray>(128)
 
     private lateinit var prefs: Prefs
     private lateinit var capture: AudioCapture
@@ -117,6 +122,17 @@ class VoiceService : Service(), WyomingServer.Listener {
             .build()
         connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
 
+        // Vosk im Hintergrund laden (erster Start kopiert ~45 MB Modell → onCreate nicht blockieren).
+        if (prefs.instantCommandsEnabled) {
+            Thread {
+                val r = try { LocalRecognizer(this) } catch (e: Throwable) {
+                    Log.w(TAG, "LocalRecognizer init: ${e.message}"); null
+                }
+                local = r?.takeIf { it.available }
+                Log.i(TAG, "On-Device-Befehle: ${if (local != null) "aktiv" else "aus"}")
+            }.start()
+        }
+
         capture.start { frame -> onAudioFrame(frame) }
         // Kein eigener Keepalive-Ping: HA pingt selbst, wir ponten (auf dem Client-Thread).
         // Ein ausgehender Ping vom Main-Thread warf NetworkOnMainThreadException und killte die Verbindung.
@@ -131,8 +147,14 @@ class VoiceService : Service(), WyomingServer.Listener {
                 if (satelliteActive && server.isConnected && wake.available
                     && System.currentTimeMillis() - lastTtsEndedAt > TTS_WAKEWORD_COOLDOWN_MS
                     && wake.accept(frame)) {
-                    triggerPipeline()
+                    onWakeDetected()
                 }
+            State.RECOGNIZING -> {
+                local?.accept(frame)
+                if (bufferedFrames.size < MAX_BUFFER_FRAMES) bufferedFrames.add(frame.copyOf())
+                detectSilence(frame)
+                if (System.currentTimeMillis() - streamStartedAt > MAX_STREAM_MS) endRecognizing()
+            }
             State.STREAMING -> {
                 server.sendAudioChunk(shortsToBytes(frame))
                 detectSilence(frame)
@@ -140,6 +162,73 @@ class VoiceService : Service(), WyomingServer.Listener {
             }
             State.SPEAKING -> { /* ignore mic during playback */ }
         }
+    }
+
+    /** Nach dem Wake-Word: wenn Vosk bereit → lokal erkennen, sonst direkt die HA-Pipeline. */
+    private fun onWakeDetected() {
+        if (local != null) startRecognizing() else triggerPipeline()
+    }
+
+    @Synchronized
+    private fun startRecognizing() {
+        if (state != State.IDLE) return
+        Log.i(TAG, "wake -> RECOGNIZING (on-device)")
+        wake.reset()
+        local?.reset()
+        bufferedFrames.clear()
+        vadSilenceFrames = 0
+        vadHadSpeech = false
+        streamStartedAt = System.currentTimeMillis()
+        state = State.RECOGNIZING
+        handler.post { VoiceEvents.onWake?.invoke() }
+    }
+
+    @Synchronized
+    private fun endRecognizing() {
+        if (state != State.RECOGNIZING) return
+        state = State.SPEAKING   // Mic ab jetzt ignorieren, während wir entscheiden
+        Thread { decideCommand() }.start()
+    }
+
+    /** Läuft auf eigenem Thread: lokal entscheiden Befehl vs. Fallback an Whisper. */
+    private fun decideCommand() {
+        val text = local?.finalText().orEmpty()
+        Log.i(TAG, "Vosk: \"$text\"")
+        val verbs = prefs.commandVerbs
+        val isCommand = text.isNotBlank() && verbs.any { text.contains(it) }
+        if (isCommand) {
+            val res = HaConversation(prefs.dashboardUrl, prefs.haToken).process(text)
+            if (res != null && res.ok) {
+                Log.i(TAG, "lokaler Befehl -> action_done (\"${res.speech}\")")
+                lastTtsEndedAt = System.currentTimeMillis()
+                bufferedFrames.clear()
+                state = State.IDLE
+                handler.post { VoiceEvents.onCommandDone?.invoke(res.speech) }
+                return
+            }
+            Log.i(TAG, "lokaler Befehl nicht ausgeführt (${res?.responseType ?: "kein Ergebnis"}) -> Fallback")
+        } else {
+            Log.i(TAG, "kein Befehl erkannt -> Fallback Whisper")
+        }
+        fallbackToPipeline()
+    }
+
+    /** Sendet die gepufferten Frames an HA (Whisper→Gemini→TTS), wenn kein lokaler Befehl griff. */
+    private fun fallbackToPipeline() {
+        if (!server.isConnected) {
+            bufferedFrames.clear(); state = State.IDLE
+            handler.post { VoiceEvents.onIdle?.invoke() }
+            return
+        }
+        Log.i(TAG, "Fallback -> Pipeline (${bufferedFrames.size} frames)")
+        server.sendRunPipeline()
+        server.sendDetection(prefs.wakeWord)
+        server.sendAudioStart()
+        for (f in bufferedFrames) server.sendAudioChunk(shortsToBytes(f))
+        bufferedFrames.clear()
+        server.sendAudioStop()
+        state = State.SPEAKING
+        handler.postDelayed(ttsTimeoutRunnable, TTS_TIMEOUT_MS)
     }
 
     @Synchronized
@@ -195,8 +284,8 @@ class VoiceService : Service(), WyomingServer.Listener {
             vadSilenceFrames = 0
         } else if (vadHadSpeech) {
             if (++vadSilenceFrames >= VAD_SILENCE_FRAMES) {
-                Log.d(TAG, "lokale VAD: Stille erkannt (rms=$rms) → endStreaming")
-                endStreaming()
+                Log.d(TAG, "lokale VAD: Stille erkannt (rms=$rms)")
+                if (state == State.RECOGNIZING) endRecognizing() else endStreaming()
             }
         }
     }
@@ -284,6 +373,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         player.stop()
         server.stop()
         wake.close()
+        local?.close()
         abandonTtsFocus()
         try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
         wakeLock?.let { if (it.isHeld) it.release() }
@@ -325,6 +415,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val CHANNEL = "dashvoice"
         private const val NOTIF_ID = 1
         private const val MAX_STREAM_MS = 12000L
+        private const val MAX_BUFFER_FRAMES = 160  // ~12,8s @80ms/Frame — Puffer für Vosk-Fallback
         private const val TTS_TIMEOUT_MS = 30000L
         private const val WATCHDOG_INTERVAL_MS = 60_000L  // Server-Selbstheilung: alle 60s prüfen
         private const val MIN_VAD_WAIT_MS = 1500L   // 1,5s Mindest-Streaming bevor VAD feuern darf

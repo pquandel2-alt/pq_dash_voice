@@ -8,6 +8,8 @@ object VoiceEvents {
     var onWake: (() -> Unit)? = null
     var onTranscript: ((text: String) -> Unit)? = null
     var onResponse: ((text: String) -> Unit)? = null
+    /** On-Device-Sofortbefehl ausgeführt (action_done) — nur visuelle Bestätigung, keine Stimme. */
+    var onCommandDone: ((speech: String) -> Unit)? = null
     var onIdle: (() -> Unit)? = null
     var onConnected: (() -> Unit)? = null
     var onDisconnected: (() -> Unit)? = null

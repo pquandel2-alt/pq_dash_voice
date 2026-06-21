@@ -15,7 +15,8 @@ class VoiceAnimationView @JvmOverloads constructor(
     enum class State(val color: Int) {
         LISTENING(Color.parseColor("#4CAF50")),
         THINKING(Color.parseColor("#2196F3")),
-        SPEAKING(Color.parseColor("#9C27B0"))
+        SPEAKING(Color.parseColor("#9C27B0")),
+        DONE(Color.parseColor("#00E676"))   // Sofortbefehl ausgeführt (grün)
     }
 
     /** 0=Orb 1=Frequenz 2=Neural 3=Vortex 4=Geometrie 5=Aurora */
@@ -157,7 +158,7 @@ class VoiceAnimationView @JvmOverloads constructor(
         val baseR  = minOf(cx, cy) * 0.38f
         val maxBar = minOf(cx, cy) * 0.40f
         val n = freqH.size
-        val intensity = when (state) { State.SPEAKING -> 1.0f; State.LISTENING -> 0.55f; State.THINKING -> 0.22f }
+        val intensity = when (state) { State.SPEAKING -> 1.0f; State.LISTENING -> 0.55f; State.THINKING -> 0.22f; State.DONE -> 0.7f }
 
         if (t - freqTick > 90L) {
             freqTick = t
@@ -388,6 +389,7 @@ class VoiceAnimationView @JvmOverloads constructor(
             State.LISTENING -> resamplePoly(polygon(6, r, cx, cy), GEO_PTS)
             State.THINKING  -> resamplePoly(polygon(GEO_PTS, r, cx, cy), GEO_PTS)
             State.SPEAKING  -> resamplePoly(star(6, r, r * 0.5f, cx, cy), GEO_PTS)
+            State.DONE      -> resamplePoly(polygon(6, r, cx, cy), GEO_PTS)
         }
         gCur = FloatArray(GEO_PTS * 2) { i -> lerp(gCur[i], gTgt[i], gMorphT) }
         gTgt = newTgt; gMorphT = 0f
