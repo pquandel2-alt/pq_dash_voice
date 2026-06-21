@@ -79,6 +79,11 @@ class Prefs(context: Context) {
         get() = sp.getFloat(KEY_FUZZY, 0.55f)
         set(v) = sp.edit().putFloat(KEY_FUZZY, v).apply()
 
+    /** Ablaufzeitpunkt (epoch ms) des aktiven lokalen Timers; 0 = keiner. Für die Display-Anzeige. */
+    var timerEndAt: Long
+        get() = sp.getLong(KEY_TIMER_END, 0L)
+        set(v) = sp.edit().putLong(KEY_TIMER_END, v).apply()
+
     companion object {
         const val DEFAULT_URL = "https://ha.quandel-home.cc"
         const val DEFAULT_PORT = 10700
@@ -106,5 +111,6 @@ class Prefs(context: Context) {
         private const val KEY_BARGEIN = "bargein_enabled"
         private const val KEY_TIMERS = "timers_enabled"
         private const val KEY_FUZZY = "fuzzy_threshold"
+        private const val KEY_TIMER_END = "timer_end_at"
     }
 }

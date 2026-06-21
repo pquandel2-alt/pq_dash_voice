@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logScroll: ScrollView
     private lateinit var logText: TextView
     private lateinit var statusDot: View
+    private lateinit var timerChip: TextView
 
     private lateinit var voiceOverlay: View
     private lateinit var voiceMicIcon: ImageView
@@ -67,6 +68,18 @@ class MainActivity : AppCompatActivity() {
             AppLog.i("UI", "Periodischer WebView-Reload (Stabilität)")
             webView.reload()
             ui.postDelayed(this, WEBVIEW_RELOAD_MS)
+        }
+    }
+    private val tickTimer = object : Runnable {
+        override fun run() {
+            val rem = prefs.timerEndAt - System.currentTimeMillis()
+            if (prefs.timerEndAt > 0L && rem > 0L) {
+                timerChip.text = "⏲ ${fmtRemaining(rem)}"
+                timerChip.visibility = View.VISIBLE
+                ui.postDelayed(this, 1000)
+            } else {
+                timerChip.visibility = View.GONE
+            }
         }
     }
     private val tickClock = object : Runnable {
@@ -95,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         logScroll           = findViewById(R.id.logScroll)
         logText             = findViewById(R.id.logText)
         statusDot           = findViewById(R.id.statusDot)
+        timerChip           = findViewById(R.id.timerChip)
         voiceOverlay        = findViewById(R.id.voiceOverlay)
         voiceMicIcon        = findViewById(R.id.voiceMicIcon)
         voiceStateText      = findViewById(R.id.voiceStateText)
@@ -139,6 +153,15 @@ class MainActivity : AppCompatActivity() {
         VoiceService.start(this)
         resetScreensaverTimer()
         ui.postDelayed(periodicReload, WEBVIEW_RELOAD_MS)
+        ui.post(tickTimer)   // läuft ein Timer noch (auch nach App-Neustart)? → Chip zeigen
+    }
+
+    /** Verbleibende Zeit als mm:ss bzw. h:mm:ss (aufgerundet auf Sekunden). */
+    private fun fmtRemaining(ms: Long): String {
+        val s = (ms + 999) / 1000
+        val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
+        return if (h > 0) String.format("%d:%02d:%02d", h, m, sec)
+        else String.format("%02d:%02d", m, sec)
     }
 
     companion object {
@@ -205,6 +228,7 @@ class MainActivity : AppCompatActivity() {
             resetScreensaverTimer()
         }
         VoiceEvents.onTimerSet = { label ->
+            ui.post(tickTimer)   // Restzeit-Chip starten
             stopMicPulse()
             voiceTranscriptText.visibility = View.GONE
             voiceResponseText.visibility = View.GONE
@@ -221,6 +245,8 @@ class MainActivity : AppCompatActivity() {
             resetScreensaverTimer()
         }
         VoiceEvents.onTimerRinging = {
+            ui.removeCallbacks(tickTimer)
+            timerChip.visibility = View.GONE
             dismissScreensaver()
             voiceTranscriptText.visibility = View.GONE
             voiceResponseText.visibility = View.GONE

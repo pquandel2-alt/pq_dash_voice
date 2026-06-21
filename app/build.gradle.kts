@@ -11,8 +11,8 @@ android {
         applicationId = "cc.quandel.dashvoice"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "2.1.0"
+        versionCode = 22
+        versionName = "2.1.1"
 
         // MatePad DBY-W09 is arm64; restrict to keep the APK small (ONNX libs are large).
         ndk {

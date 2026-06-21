@@ -23,21 +23,31 @@ object LocalTimer {
         val isTimer = t.contains("timer") || t.contains("wecker") || t.contains("erinner")
         if (!isTimer) return null
 
-        var value: Double? = Regex("(\\d+([.,]\\d+)?)").find(t)
-            ?.groupValues?.get(1)?.replace(',', '.')?.toDoubleOrNull()
-        if (value == null) {
-            if (t.contains(" halbe ") || t.contains(" halben ")) value = 0.5
-            else for ((w, n) in NUM) if (t.contains(" $w ")) { value = n; break }
-        }
-        val v = value ?: return null
-
+        // Einheit finden; die Zahl steht direkt DAVOR (so wird „ein timer" nicht als 1 gewertet).
+        val unit = Regex("\\b(sekunden?|minuten?|stunden?)\\b").find(t) ?: return null
         val unitMs = when {
-            t.contains("stunde") -> 3_600_000.0
-            t.contains("sekunde") -> 1_000.0
-            else -> 60_000.0   // Default: Minuten
+            unit.value.startsWith("stunde") -> 3_600_000.0
+            unit.value.startsWith("sekunde") -> 1_000.0
+            else -> 60_000.0
         }
-        val ms = (v * unitMs).toLong()
+        val before = t.substring(0, unit.range.first).trim()
+        val value = numberBefore(before) ?: return null
+        val ms = (value * unitMs).toLong()
         return if (ms in 1_000..86_400_000) ms else null
+    }
+
+    /** Liest die Zahl aus den 1–2 Wörtern unmittelbar vor der Einheit. */
+    private fun numberBefore(before: String): Double? {
+        val words = before.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.isEmpty()) return null
+        val tail = words.takeLast(2)
+        val joined = tail.joinToString(" ")
+        if (joined.contains("anderthalb") || joined.contains("eineinhalb")) return 1.5
+        if (joined.contains("halb")) return 0.5   // „halbe/halben"
+        val last = tail.last()
+        last.replace(',', '.').toDoubleOrNull()?.let { return it }
+        Regex("\\d+([.,]\\d+)?").find(last)?.let { return it.value.replace(',', '.').toDoubleOrNull() }
+        return NUM[last]
     }
 
     fun humanize(ms: Long): String {

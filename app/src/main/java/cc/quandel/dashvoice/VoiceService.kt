@@ -280,7 +280,9 @@ class VoiceService : Service(), WyomingServer.Listener {
     private fun scheduleTimer(ms: Long) {
         val label = LocalTimer.humanize(ms)
         Log.i(TAG, "LocalTimer gestellt: ${ms}ms ($label)")
-        TimerReceiver.schedule(this, System.currentTimeMillis() + ms)
+        val endAt = System.currentTimeMillis() + ms
+        prefs.timerEndAt = endAt
+        TimerReceiver.schedule(this, endAt)
         lastTtsEndedAt = System.currentTimeMillis()
         bufferedFrames.clear()
         state = State.IDLE
@@ -291,6 +293,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     private val timerAutoStop = Runnable { stopTimerRing() }
 
     private fun ringTimer() {
+        prefs.timerEndAt = 0L   // Countdown vorbei → Chip ausblenden
         ringer?.start()
         // Kiosk-UI nach vorne holen, damit das Stopp-Overlay sichtbar ist und der Screen angeht.
         try {
