@@ -21,6 +21,7 @@ import androidx.core.app.NotificationCompat
 import cc.quandel.dashvoice.util.AppLog as Log
 import cc.quandel.dashvoice.audio.AudioCapture
 import cc.quandel.dashvoice.audio.AudioPlayer
+import cc.quandel.dashvoice.audio.Ringer
 import cc.quandel.dashvoice.wake.LocalRecognizer
 import cc.quandel.dashvoice.wake.NoopWakeWordDetector
 import cc.quandel.dashvoice.wake.OpenWakeWordDetector
@@ -43,6 +44,10 @@ class VoiceService : Service(), WyomingServer.Listener {
     // On-Device-Sofortbefehle (Vosk): puffert das Audio während RECOGNIZING für ggf. Fallback an HA.
     @Volatile private var local: LocalRecognizer? = null
     private val bufferedFrames = ArrayList<ShortArray>(128)
+    @Volatile private var entities: HaEntities? = null
+    @Volatile private var followUpActive = false
+    @Volatile private var ignoreTtsChunks = false
+    private var ringer: Ringer? = null
 
     private lateinit var prefs: Prefs
     private lateinit var capture: AudioCapture
@@ -122,14 +127,18 @@ class VoiceService : Service(), WyomingServer.Listener {
             .build()
         connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
 
-        // Vosk im Hintergrund laden (erster Start kopiert ~45 MB Modell → onCreate nicht blockieren).
+        ringer = Ringer(this)
+        // Vosk + Gerätenamen im Hintergrund laden (erster Start kopiert ~45 MB Modell → onCreate nicht blockieren).
         if (prefs.instantCommandsEnabled) {
             Thread {
                 val r = try { LocalRecognizer(this) } catch (e: Throwable) {
                     Log.w(TAG, "LocalRecognizer init: ${e.message}"); null
                 }
                 local = r?.takeIf { it.available }
-                Log.i(TAG, "On-Device-Befehle: ${if (local != null) "aktiv" else "aus"}")
+                val ent = HaEntities(prefs.dashboardUrl, prefs.haToken)
+                ent.refresh()
+                entities = ent
+                Log.i(TAG, "On-Device-Befehle: ${if (local != null) "aktiv" else "aus"}, Geräte: ${ent.names.size}")
             }.start()
         }
 
@@ -153,14 +162,21 @@ class VoiceService : Service(), WyomingServer.Listener {
                 local?.accept(frame)
                 if (bufferedFrames.size < MAX_BUFFER_FRAMES) bufferedFrames.add(frame.copyOf())
                 detectSilence(frame)
-                if (System.currentTimeMillis() - streamStartedAt > MAX_STREAM_MS) endRecognizing()
+                val elapsed = System.currentTimeMillis() - streamStartedAt
+                if (followUpActive && !vadHadSpeech && elapsed > FOLLOW_UP_NO_SPEECH_MS) abortToIdle()
+                else if (elapsed > MAX_STREAM_MS) endRecognizing()
             }
             State.STREAMING -> {
                 server.sendAudioChunk(shortsToBytes(frame))
                 detectSilence(frame)
                 if (System.currentTimeMillis() - streamStartedAt > MAX_STREAM_MS) endStreaming()
             }
-            State.SPEAKING -> { /* ignore mic during playback */ }
+            State.SPEAKING -> {
+                // Barge-in: während der Sprachausgabe aufs Wake-Word hören (AEC unterdrückt die eigene Stimme).
+                if (prefs.bargeInEnabled && wake.available && ringer?.isRinging != true && wake.accept(frame)) {
+                    bargeIn()
+                }
+            }
         }
     }
 
@@ -170,14 +186,15 @@ class VoiceService : Service(), WyomingServer.Listener {
     }
 
     @Synchronized
-    private fun startRecognizing() {
+    private fun startRecognizing(followUp: Boolean = false) {
         if (state != State.IDLE) return
-        Log.i(TAG, "wake -> RECOGNIZING (on-device)")
+        Log.i(TAG, if (followUp) "follow-up -> RECOGNIZING" else "wake -> RECOGNIZING (on-device)")
         wake.reset()
         local?.reset()
         bufferedFrames.clear()
         vadSilenceFrames = 0
         vadHadSpeech = false
+        followUpActive = followUp
         streamStartedAt = System.currentTimeMillis()
         state = State.RECOGNIZING
         handler.post { VoiceEvents.onWake?.invoke() }
@@ -186,31 +203,108 @@ class VoiceService : Service(), WyomingServer.Listener {
     @Synchronized
     private fun endRecognizing() {
         if (state != State.RECOGNIZING) return
+        followUpActive = false
         state = State.SPEAKING   // Mic ab jetzt ignorieren, während wir entscheiden
         Thread { decideCommand() }.start()
     }
 
-    /** Läuft auf eigenem Thread: lokal entscheiden Befehl vs. Fallback an Whisper. */
+    /** Follow-up ohne Sprache → sauber zurück nach IDLE (kein Whisper-Call). */
+    @Synchronized
+    private fun abortToIdle() {
+        if (state != State.RECOGNIZING) return
+        Log.i(TAG, "Follow-up: keine Sprache → IDLE")
+        followUpActive = false
+        bufferedFrames.clear()
+        state = State.IDLE
+        handler.post { VoiceEvents.onIdle?.invoke() }
+    }
+
+    /** Läuft auf eigenem Thread: Timer? lokaler Befehl (Fuzzy/Mehrgerät)? sonst Fallback an Whisper. */
     private fun decideCommand() {
         val text = local?.finalText().orEmpty()
         Log.i(TAG, "Vosk: \"$text\"")
-        val verbs = prefs.commandVerbs
-        val isCommand = text.isNotBlank() && verbs.any { text.contains(it) }
-        if (isCommand) {
-            val res = HaConversation(prefs.dashboardUrl, prefs.haToken).process(text)
-            if (res != null && res.ok) {
-                Log.i(TAG, "lokaler Befehl -> action_done (\"${res.speech}\")")
+
+        // 1) Lokaler Timer/Wecker
+        if (prefs.timersEnabled) {
+            val ms = LocalTimer.parse(text)
+            if (ms != null) { scheduleTimer(ms); return }
+        }
+
+        // 2) Lokaler Gerätebefehl (Normalisierung + Fuzzy + Mehrgerät)
+        val cmds = CommandParser.parse(text, prefs.commandVerbs, entities?.names ?: emptyList(), prefs.fuzzyThreshold)
+        if (cmds != null) {
+            val conv = HaConversation(prefs.dashboardUrl, prefs.haToken)
+            var ok = 0
+            for (c in cmds) {
+                Log.i(TAG, "lokaler Befehl: \"$c\"")
+                val res = conv.process(c)
+                if (res != null && res.ok) ok++
+            }
+            if (ok > 0) {
+                Log.i(TAG, "Befehle ausgeführt: $ok/${cmds.size}")
                 lastTtsEndedAt = System.currentTimeMillis()
                 bufferedFrames.clear()
                 state = State.IDLE
-                handler.post { VoiceEvents.onCommandDone?.invoke(res.speech) }
+                handler.post { VoiceEvents.onCommandDone?.invoke("") }
+                maybeStartFollowUp()
                 return
             }
-            Log.i(TAG, "lokaler Befehl nicht ausgeführt (${res?.responseType ?: "kein Ergebnis"}) -> Fallback")
+            Log.i(TAG, "kein Befehl ausgeführt -> Fallback Whisper")
         } else {
             Log.i(TAG, "kein Befehl erkannt -> Fallback Whisper")
         }
         fallbackToPipeline()
+    }
+
+    /** Nach einem Turn (Befehl/Antwort) kurz weiter zuhören, ohne erneutes „Ok Nabu". */
+    private fun maybeStartFollowUp() {
+        if (!prefs.followUpEnabled || !server.isConnected || local == null) return
+        handler.postDelayed({
+            if (state == State.IDLE) startRecognizing(followUp = true)
+        }, FOLLOW_UP_DELAY_MS)
+    }
+
+    private fun bargeIn() {
+        Log.i(TAG, "Barge-in: Wake während TTS → unterbreche")
+        ignoreTtsChunks = true
+        handler.removeCallbacks(ttsTimeoutRunnable)
+        player.stop()
+        abandonTtsFocus()
+        Thread { server.sendPlayed() }.start()
+        state = State.IDLE
+        lastTtsEndedAt = 0L
+        startRecognizing()
+    }
+
+    // ---- lokaler Timer/Wecker ----
+    private fun scheduleTimer(ms: Long) {
+        val label = LocalTimer.humanize(ms)
+        Log.i(TAG, "LocalTimer gestellt: ${ms}ms ($label)")
+        TimerReceiver.schedule(this, System.currentTimeMillis() + ms)
+        lastTtsEndedAt = System.currentTimeMillis()
+        bufferedFrames.clear()
+        state = State.IDLE
+        handler.post { VoiceEvents.onTimerSet?.invoke(label) }
+        maybeStartFollowUp()
+    }
+
+    private val timerAutoStop = Runnable { stopTimerRing() }
+
+    private fun ringTimer() {
+        ringer?.start()
+        // Kiosk-UI nach vorne holen, damit das Stopp-Overlay sichtbar ist und der Screen angeht.
+        try {
+            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {}
+        handler.post { VoiceEvents.onTimerRinging?.invoke() }
+        handler.removeCallbacks(timerAutoStop)
+        handler.postDelayed(timerAutoStop, TIMER_AUTOSTOP_MS)
+    }
+
+    private fun stopTimerRing() {
+        handler.removeCallbacks(timerAutoStop)
+        ringer?.stop()
+        handler.post { VoiceEvents.onTimerStopped?.invoke() }
     }
 
     /** Sendet die gepufferten Frames an HA (Whisper→Gemini→TTS), wenn kein lokaler Befehl griff. */
@@ -333,16 +427,18 @@ class VoiceService : Service(), WyomingServer.Listener {
     override fun onTtsAudioStart(rate: Int, width: Int, channels: Int) {
         Log.i(TAG, "TTS start ${rate}Hz/${channels}ch")
         handler.removeCallbacks(ttsTimeoutRunnable)
+        ignoreTtsChunks = false
         requestTtsFocus()
         state = State.SPEAKING
         player.start(rate, channels, width, prefs.ttsVolume / 100f)
     }
 
-    override fun onTtsAudioChunk(pcm: ByteArray) = player.write(pcm)
+    override fun onTtsAudioChunk(pcm: ByteArray) { if (!ignoreTtsChunks) player.write(pcm) }
 
     override fun onTtsAudioStop() {
         Log.i(TAG, "TTS audio-stop — draining buffer")
         player.finishPlaying(handler) {
+            if (state != State.SPEAKING) return@finishPlaying  // z. B. nach Barge-in nichts überschreiben
             Log.i(TAG, "TTS fertig -> played")
             abandonTtsFocus()
             lastTtsEndedAt = System.currentTimeMillis()
@@ -350,6 +446,7 @@ class VoiceService : Service(), WyomingServer.Listener {
             state = State.IDLE
             VoiceEvents.onIdle?.invoke()
             Thread { server.sendPlayed() }.start()
+            maybeStartFollowUp()
         }
     }
 
@@ -363,7 +460,11 @@ class VoiceService : Service(), WyomingServer.Listener {
         // Off-Main-Thread: triggerPipeline macht Socket-I/O (sendRunPipeline/Detection/AudioStart).
         // Der Wake-Word-Pfad läuft auf dem Capture-Thread; Tap-to-Talk/ACTION_TALK kommt vom Main-Thread
         // und würde sonst NetworkOnMainThreadException werfen. @Synchronized macht den Aufruf thread-safe.
-        if (intent?.action == ACTION_TALK) Thread { triggerPipeline() }.start()
+        when (intent?.action) {
+            ACTION_TALK -> Thread { triggerPipeline() }.start()
+            TimerReceiver.ACTION_TIMER -> ringTimer()
+            ACTION_TIMER_STOP -> stopTimerRing()
+        }
         return START_STICKY
     }
 
@@ -374,6 +475,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         server.stop()
         wake.close()
         local?.close()
+        ringer?.stop()
         abandonTtsFocus()
         try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
         wakeLock?.let { if (it.isHeld) it.release() }
@@ -422,7 +524,11 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val VAD_THRESHOLD = 500f      // RMS-Amplitude (0–32768); bei Problemen erhöhen
         private const val VAD_SILENCE_FRAMES = 12   // 12 × 80ms = 960ms Stille → audio-stop
         private const val TTS_WAKEWORD_COOLDOWN_MS = 2000L  // 2s Sperrzeit nach TTS-Ende gegen Echo-Trigger
+        private const val FOLLOW_UP_DELAY_MS = 700L         // kurze Pause vor Follow-up-Zuhören (Echo abklingen)
+        private const val FOLLOW_UP_NO_SPEECH_MS = 5000L    // Follow-up bricht ab, wenn nichts gesagt wird
+        private const val TIMER_AUTOSTOP_MS = 120_000L      // Wecker stoppt spätestens nach 2 min
         const val ACTION_TALK = "cc.quandel.dashvoice.TALK"
+        const val ACTION_TIMER_STOP = "cc.quandel.dashvoice.TIMER_STOP"
 
         fun start(ctx: Context) {
             val i = Intent(ctx, VoiceService::class.java)
@@ -432,6 +538,20 @@ class VoiceService : Service(), WyomingServer.Listener {
 
         fun talk(ctx: Context) {
             val i = Intent(ctx, VoiceService::class.java).setAction(ACTION_TALK)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
+            else ctx.startService(i)
+        }
+
+        /** Vom TimerReceiver bei Ablauf aufgerufen. */
+        fun fireTimer(ctx: Context) {
+            val i = Intent(ctx, VoiceService::class.java).setAction(TimerReceiver.ACTION_TIMER)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
+            else ctx.startService(i)
+        }
+
+        /** Stoppt den klingelnden Wecker (z. B. vom UI-Tap). */
+        fun stopTimer(ctx: Context) {
+            val i = Intent(ctx, VoiceService::class.java).setAction(ACTION_TIMER_STOP)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
             else ctx.startService(i)
         }

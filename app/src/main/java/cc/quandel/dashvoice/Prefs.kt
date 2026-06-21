@@ -59,6 +59,26 @@ class Prefs(context: Context) {
             .split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
         set(v) = sp.edit().putString(KEY_CMD_VERBS, v.joinToString(",")).apply()
 
+    /** Follow-up: nach einer Antwort kurz weiter zuhören (ohne erneutes „Ok Nabu"). */
+    var followUpEnabled: Boolean
+        get() = sp.getBoolean(KEY_FOLLOWUP, true)
+        set(v) = sp.edit().putBoolean(KEY_FOLLOWUP, v).apply()
+
+    /** Barge-in: laufende Sprachausgabe durch Sprechen unterbrechen. */
+    var bargeInEnabled: Boolean
+        get() = sp.getBoolean(KEY_BARGEIN, true)
+        set(v) = sp.edit().putBoolean(KEY_BARGEIN, v).apply()
+
+    /** Lokale Timer/Wecker auf dem Tablet. */
+    var timersEnabled: Boolean
+        get() = sp.getBoolean(KEY_TIMERS, true)
+        set(v) = sp.edit().putBoolean(KEY_TIMERS, v).apply()
+
+    /** Ähnlichkeits-Schwelle (0..1) für das Fuzzy-Matching auf echte Gerätenamen. */
+    var fuzzyThreshold: Float
+        get() = sp.getFloat(KEY_FUZZY, 0.55f)
+        set(v) = sp.edit().putFloat(KEY_FUZZY, v).apply()
+
     companion object {
         const val DEFAULT_URL = "https://ha.quandel-home.cc"
         const val DEFAULT_PORT = 10700
@@ -67,7 +87,7 @@ class Prefs(context: Context) {
         const val DEFAULT_SCREENSAVER_DELAY = 120_000L
         // Befehls-Verben (de). Bewusst eher spezifisch, um Fragen nicht fälschlich als Befehl zu werten.
         const val DEFAULT_CMD_VERBS =
-            "schalt,einschalt,ausschalt,mach an,mach aus,aktivier,starte,start ,stoppe,stopp," +
+            "schalt,einschalt,ausschalt,mach an,mach aus,aktivier,deaktivier,starte,start ,stoppe,stopp," +
             "dimm,öffne,schließe,fahr,runterfahren,hochfahren,herunterfahren,heize,stelle"
 
         private const val KEY_URL = "url"
@@ -82,5 +102,9 @@ class Prefs(context: Context) {
         private const val KEY_ANIMATION_STYLE = "animation_style"
         private const val KEY_INSTANT_CMD = "instant_commands"
         private const val KEY_CMD_VERBS = "command_verbs"
+        private const val KEY_FOLLOWUP = "followup_enabled"
+        private const val KEY_BARGEIN = "bargein_enabled"
+        private const val KEY_TIMERS = "timers_enabled"
+        private const val KEY_FUZZY = "fuzzy_threshold"
     }
 }

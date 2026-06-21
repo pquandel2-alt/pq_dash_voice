@@ -204,6 +204,44 @@ class MainActivity : AppCompatActivity() {
                 .start()
             resetScreensaverTimer()
         }
+        VoiceEvents.onTimerSet = { label ->
+            stopMicPulse()
+            voiceTranscriptText.visibility = View.GONE
+            voiceResponseText.visibility = View.GONE
+            voiceStateText.text = "⏲ Timer: $label"
+            voiceAnimation.setState(VoiceAnimationView.State.DONE)
+            setWebViewBlur(false)
+            voiceOverlay.animate()
+                .alpha(0f).setStartDelay(1500).setDuration(450)
+                .withEndAction {
+                    voiceAnimation.stopAnimation()
+                    voiceOverlay.visibility = View.GONE
+                    voiceOverlay.alpha = 1f
+                }.start()
+            resetScreensaverTimer()
+        }
+        VoiceEvents.onTimerRinging = {
+            dismissScreensaver()
+            voiceTranscriptText.visibility = View.GONE
+            voiceResponseText.visibility = View.GONE
+            voiceStateText.text = "⏰ Timer abgelaufen — tippen zum Stoppen"
+            voiceAnimation.setState(VoiceAnimationView.State.SPEAKING)
+            voiceAnimation.startAnimation()
+            voiceOverlay.animate().cancel()
+            voiceOverlay.alpha = 1f
+            voiceOverlay.visibility = View.VISIBLE
+            setWebViewBlur(true)
+            voiceOverlay.setOnClickListener { VoiceService.stopTimer(this@MainActivity) }
+        }
+        VoiceEvents.onTimerStopped = {
+            voiceOverlay.setOnClickListener(null)
+            stopMicPulse()
+            voiceAnimation.stopAnimation()
+            setWebViewBlur(false)
+            voiceOverlay.visibility = View.GONE
+            voiceOverlay.alpha = 1f
+            resetScreensaverTimer()
+        }
         VoiceEvents.onIdle = {
             stopMicPulse()
             voiceAnimation.stopAnimation()
@@ -400,6 +438,9 @@ class MainActivity : AppCompatActivity() {
         VoiceEvents.onTranscript = null
         VoiceEvents.onResponse = null
         VoiceEvents.onCommandDone = null
+        VoiceEvents.onTimerSet = null
+        VoiceEvents.onTimerRinging = null
+        VoiceEvents.onTimerStopped = null
         VoiceEvents.onIdle = null
         VoiceEvents.onConnected = null
         VoiceEvents.onDisconnected = null

@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import cc.quandel.dashvoice.util.AppLog as Log
 import kotlin.concurrent.thread
@@ -20,6 +21,10 @@ class AudioCapture(
     @Volatile private var running = false
     private var recorder: AudioRecord? = null
     private var worker: Thread? = null
+    // Referenzen halten, damit die Effekte nicht weg-GC't werden
+    private var aec: AcousticEchoCanceler? = null
+    private var ns: NoiseSuppressor? = null
+    private var agc: AutomaticGainControl? = null
 
     @SuppressLint("MissingPermission")
     fun start(onFrame: (ShortArray) -> Unit) {
@@ -46,12 +51,19 @@ class AudioCapture(
         running = true
         rec.startRecording()
         if (AcousticEchoCanceler.isAvailable()) {
-            AcousticEchoCanceler.create(rec.audioSessionId)?.enabled = true
+            aec = AcousticEchoCanceler.create(rec.audioSessionId)?.apply { enabled = true }
             Log.d(TAG, "AcousticEchoCanceler aktiviert")
         }
         if (NoiseSuppressor.isAvailable()) {
-            NoiseSuppressor.create(rec.audioSessionId)?.enabled = true
+            ns = NoiseSuppressor.create(rec.audioSessionId)?.apply { enabled = true }
             Log.d(TAG, "NoiseSuppressor aktiviert")
+        }
+        // AutomaticGainControl: hebt leise/entfernte Sprache → bessere Far-field-Erkennung.
+        if (AutomaticGainControl.isAvailable()) {
+            agc = AutomaticGainControl.create(rec.audioSessionId)?.apply { enabled = true }
+            Log.d(TAG, "AutomaticGainControl aktiviert")
+        } else {
+            Log.d(TAG, "AutomaticGainControl nicht verfügbar")
         }
         worker = thread(name = "audio-capture") {
             val buf = ShortArray(frameSamples)
@@ -68,6 +80,10 @@ class AudioCapture(
         running = false
         worker?.join(500)
         worker = null
+        try { aec?.release() } catch (_: Exception) {}
+        try { ns?.release() } catch (_: Exception) {}
+        try { agc?.release() } catch (_: Exception) {}
+        aec = null; ns = null; agc = null
         recorder?.let {
             try {
                 it.stop()

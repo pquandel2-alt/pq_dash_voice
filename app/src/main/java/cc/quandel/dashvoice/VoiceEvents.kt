@@ -10,6 +10,12 @@ object VoiceEvents {
     var onResponse: ((text: String) -> Unit)? = null
     /** On-Device-Sofortbefehl ausgeführt (action_done) — nur visuelle Bestätigung, keine Stimme. */
     var onCommandDone: ((speech: String) -> Unit)? = null
+    /** Timer gestellt (Bestätigung, z. B. „⏲ Timer: 5 Min"). */
+    var onTimerSet: ((label: String) -> Unit)? = null
+    /** Timer/Wecker klingelt — Overlay zum Stoppen anzeigen. */
+    var onTimerRinging: (() -> Unit)? = null
+    /** Klingeln gestoppt. */
+    var onTimerStopped: (() -> Unit)? = null
     var onIdle: (() -> Unit)? = null
     var onConnected: (() -> Unit)? = null
     var onDisconnected: (() -> Unit)? = null
