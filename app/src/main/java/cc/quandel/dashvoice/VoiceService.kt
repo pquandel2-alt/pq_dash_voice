@@ -48,6 +48,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     @Volatile private var followUpActive = false
     @Volatile private var ignoreTtsChunks = false
     private var ringer: Ringer? = null
+    private var battery: BatteryReporter? = null
 
     private lateinit var prefs: Prefs
     private lateinit var capture: AudioCapture
@@ -147,6 +148,8 @@ class VoiceService : Service(), WyomingServer.Listener {
         // Ein ausgehender Ping vom Main-Thread warf NetworkOnMainThreadException und killte die Verbindung.
         handler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
         RestartReceiver.schedule(this)
+        // Akkustand des Tablets als HA-Entität melden (für Lade-Relais-Automation).
+        battery = BatteryReporter(this, prefs.dashboardUrl, prefs.haToken, prefs.satelliteName).also { it.start() }
         Log.i(TAG, "started (wake=${if (wake.available) "openWakeWord" else "tap-to-talk"})")
     }
 
@@ -479,6 +482,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         wake.close()
         local?.close()
         ringer?.stop()
+        battery?.stop()
         abandonTtsFocus()
         try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
         wakeLock?.let { if (it.isHeld) it.release() }
