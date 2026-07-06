@@ -24,8 +24,11 @@ import java.nio.FloatBuffer
 class OpenWakeWordDetector(
     context: Context,
     wakeWord: String,
-    private val threshold: Float
+    threshold: Float
 ) : WakeWordDetector {
+
+    /** Live änderbar (SettingsActivity → VoiceService.applySettings), ohne Neustart. */
+    @Volatile var threshold: Float = threshold
 
     private val env = OrtEnvironment.getEnvironment()
     private var melSession: OrtSession? = null

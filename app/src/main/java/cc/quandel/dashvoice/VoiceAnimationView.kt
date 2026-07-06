@@ -61,6 +61,18 @@ class VoiceAnimationView @JvmOverloads constructor(
     // ── Style 5: Aurora ──
     private val aPhases = FloatArray(5) { it * 0.8f }
 
+    // ── Style 6: Face / Bubble ──
+    private var curHue = 140f
+    private var curSat = 0.78f
+    private var mouthLevel = 0f
+    @Volatile private var mouthTarget = 0f
+    private var blinkPhase = 1f
+    private var nextBlinkAt = 0L
+    private var gazeX = 0f; private var gazeY = 0f
+    private var gTX = 0f;   private var gTY = 0f
+    private var nextSaccadeAt = 0L
+    private val hsvTmp = FloatArray(3)
+
     // ────────────────────────────────────────────────
 
     override fun onDraw(canvas: Canvas) {
@@ -74,6 +86,7 @@ class VoiceAnimationView @JvmOverloads constructor(
             3 -> drawVortex(canvas, cx, cy, t)
             4 -> drawGeo(canvas, cx, cy, t)
             5 -> drawAurora(canvas, cx, cy, t)
+            6 -> drawFace(canvas, cx, cy, t)
         }
     }
 
@@ -82,6 +95,9 @@ class VoiceAnimationView @JvmOverloads constructor(
         if (style == 4) updateGeoTarget()
         invalidate()
     }
+
+    /** Aktueller TTS-Pegel (0..1) — bewegt den Mund im SPEAKING-Zustand (Stil 6). */
+    fun setMouthLevel(level: Float) { mouthTarget = level.coerceIn(0f, 1f) }
 
     fun startAnimation() {
         visibility = VISIBLE
@@ -106,6 +122,12 @@ class VoiceAnimationView @JvmOverloads constructor(
             3 -> { vParts = buildParticles() }
             4 -> { gRot = 0f; gMorphT = 1f; initGeoShapes() }
             5 -> { for (i in aPhases.indices) aPhases[i] = i * 0.8f }
+            6 -> {
+                curHue = stateHue(); curSat = stateSat()
+                mouthLevel = 0f; mouthTarget = 0f
+                blinkPhase = 1f; nextBlinkAt = 0L
+                gazeX = 0f; gazeY = 0f; gTX = 0f; gTY = 0f; nextSaccadeAt = 0L
+            }
         }
     }
 
@@ -448,5 +470,104 @@ class VoiceAnimationView @JvmOverloads constructor(
             floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
         canvas.drawCircle(cx, cy, 48f * pulse, p)
         p.shader = null
+    }
+
+    // ═══════════════════════════════════════════════════════
+    //  Style 6: Face / Bubble — zustandsfarbiger Nebel + Gesicht + Lippensync
+    //  Farbe: grün=LISTENING, blau=THINKING, lila=SPEAKING, grün=DONE
+    // ═══════════════════════════════════════════════════════
+    private fun stateHue() = when (state) {
+        State.LISTENING -> 140f; State.THINKING -> 210f; State.SPEAKING -> 285f; State.DONE -> 150f
+    }
+    private fun stateSat() = when (state) {
+        State.LISTENING -> 0.78f; State.THINKING -> 0.82f; State.SPEAKING -> 0.74f; State.DONE -> 0.80f
+    }
+    private fun hsv(h: Float, s: Float, v: Float, a: Int): Int {
+        hsvTmp[0] = ((h % 360f) + 360f) % 360f
+        hsvTmp[1] = s.coerceIn(0f, 1f); hsvTmp[2] = v.coerceIn(0f, 1f)
+        return (a.coerceIn(0, 255) shl 24) or (Color.HSVToColor(hsvTmp) and 0x00FFFFFF)
+    }
+
+    private fun drawFace(canvas: Canvas, cx: Float, cy: Float, t: Long) {
+        val time = t / 1000f
+        curHue += (stateHue() - curHue) * 0.10f
+        curSat += (stateSat() - curSat) * 0.10f
+
+        val baseR   = minOf(cx, cy) * 0.62f
+        val breathe = 1f + 0.025f * sin(time * 1.05f)
+        val sq      = 0.05f * sin(time * 1.5f)
+        val rx = baseR * breathe * (1f + sq)
+        val ry = baseR * breathe * (1f - sq)
+        val R  = (rx + ry) / 2f
+
+        p.style = Paint.Style.FILL; p.alpha = 255
+
+        // --- Nebel-Rand: gefederter radialer Farbring (weiche Innen-/Außenkante) ---
+        p.shader = RadialGradient(cx, cy, R * 1.42f,
+            intArrayOf(0, 0, hsv(curHue, curSat, 0.56f, 235), hsv(curHue, curSat, 0.50f, 90), 0),
+            floatArrayOf(0f, 0.32f, 0.60f, 0.85f, 1f), Shader.TileMode.CLAMP)
+        canvas.drawCircle(cx, cy, R * 1.42f, p)
+
+        // wandernder Schimmer (Lebendigkeit)
+        val sa = time * 0.6f
+        val sx = cx + cos(sa) * R * 0.86f
+        val sy = cy + sin(sa) * R * 0.86f
+        p.shader = RadialGradient(sx, sy, R * 0.55f,
+            intArrayOf(hsv(curHue, curSat * 0.7f, 0.85f, 80), 0), null, Shader.TileMode.CLAMP)
+        canvas.drawCircle(sx, sy, R * 0.55f, p)
+
+        // --- Körper (auf Zustandsfarbe getintet, sonst kippt Lila nach Blau) ---
+        p.shader = RadialGradient(cx, cy - ry * 0.15f, ry * 1.02f,
+            intArrayOf(hsv(curHue, 0.45f, 0.15f, 130), hsv(curHue, 0.42f, 0.09f, 115), hsv(curHue, 0.40f, 0.05f, 30)),
+            floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        canvas.drawCircle(cx, cy, R * 0.95f, p)
+
+        // --- Innenglühen ---
+        p.shader = RadialGradient(cx, cy, R * 0.72f,
+            intArrayOf(hsv(curHue, curSat, 0.48f, 56), 0), null, Shader.TileMode.CLAMP)
+        canvas.drawCircle(cx, cy, R * 0.72f, p)
+        p.shader = null
+
+        // --- Augen: Blinzeln + Blickdrift ---
+        if (t > nextBlinkAt) { blinkPhase = 0f; nextBlinkAt = t + 1800L + (Math.random() * 4200).toLong() }
+        blinkPhase = min(1f, blinkPhase + 0.10f)
+        val blinkScale = if (blinkPhase < 0.5f) 1f - blinkPhase * 2f else (blinkPhase - 0.5f) * 2f
+        if (t > nextSaccadeAt) {
+            gTX = ((Math.random() * 2 - 1) * (R * 0.07f)).toFloat()
+            gTY = ((Math.random() * 2 - 1) * (R * 0.045f)).toFloat()
+            if (state == State.THINKING) gTY = (-(R * 0.04f) - Math.random() * (R * 0.04f)).toFloat()
+            nextSaccadeAt = t + 900L + (Math.random() * 2200).toLong()
+        }
+        gazeX += (gTX - gazeX) * 0.08f
+        gazeY += (gTY - gazeY) * 0.08f
+
+        val eyeDX = R * 0.185f
+        val eyeY  = cy - ry * 0.06f
+        val eW    = R * 0.13f
+        val eH    = R * 0.24f * (0.28f + 0.72f * blinkScale)
+        for (sgn in intArrayOf(-1, 1)) {
+            val ex = cx + sgn * eyeDX + gazeX
+            val ey = eyeY + gazeY
+            p.shader = RadialGradient(ex, ey, eW * 1.8f,
+                intArrayOf(hsv(0f, 0f, 1f, 90), 0), null, Shader.TileMode.CLAMP)
+            canvas.drawCircle(ex, ey, eW * 1.8f, p)
+            p.shader = null
+            p.color = Color.WHITE
+            val r = eW / 2f
+            canvas.drawRoundRect(ex - eW / 2f, ey - eH / 2f, ex + eW / 2f, ey + eH / 2f, r, r, p)
+        }
+
+        // --- Mund: echte TTS-Amplitude (schneller Anstieg, sanftes Schließen) ---
+        val tgt = if (state == State.SPEAKING) mouthTarget else 0f
+        mouthLevel += (tgt - mouthLevel) * (if (tgt > mouthLevel) 0.45f else 0.18f)
+        if (mouthLevel > 0.02f) {
+            val mw = R * 0.26f + mouthLevel * R * 0.07f
+            val mh = R * 0.045f + mouthLevel * R * 0.24f
+            val my = cy + ry * 0.30f
+            p.color = Color.WHITE
+            canvas.drawOval(cx - mw / 2f, my - mh / 2f, cx + mw / 2f, my + mh / 2f, p)
+            p.color = hsv(curHue, 0.40f, 0.18f, 90)
+            canvas.drawOval(cx - mw * 0.31f, my - mh * 0.30f, cx + mw * 0.31f, my + mh * 0.30f, p)
+        }
     }
 }

@@ -109,6 +109,32 @@
             android:hint="sensor.aussentemperatur,weather.home"
             android:inputType="text" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Brain-Graph als Screensaver (URL leer = Uhr)" />
+        <EditText
+            android:id="@+id/screensaverBrainUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="http://192.168.178.101:8099/?kiosk"
+            android:inputType="textUri"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Brain-Graph Zoom-Abstand (leer = Standard 2200)" />
+        <EditText
+            android:id="@+id/screensaverZoomDistance"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="2200"
+            android:inputType="number"
+            android:textSize="12sp" />
+
         <!-- ── Audio ── -->
         <View
             android:layout_width="match_parent"
@@ -136,6 +162,41 @@
             android:layout_height="wrap_content"
             android:max="100"
             android:progress="80" />
+
+        <!-- Far-field: Software-Mic-Gain (Ersatz für fehlendes Hardware-AGC) -->
+        <TextView
+            android:id="@+id/micGainLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Mikrofon-Verstärkung: 1.0×" />
+        <SeekBar
+            android:id="@+id/micGain"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="500"
+            android:progress="0" />
+
+        <!-- Far-field: Wake-Empfindlichkeit. RECHTS = empfindlicher / weitere Reichweite. -->
+        <TextView
+            android:id="@+id/wakeThresholdLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Wake-Empfindlichkeit: 66% (Schwelle 0.40)" />
+        <SeekBar
+            android:id="@+id/wakeThreshold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="60"
+            android:progress="40" />
+
+        <CheckBox
+            android:id="@+id/noiseSuppression"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Rauschunterdrückung (für Far-field ggf. abschalten)" />
 
         <TextView
             android:layout_width="wrap_content"

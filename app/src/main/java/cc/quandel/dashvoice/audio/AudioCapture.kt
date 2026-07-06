@@ -16,8 +16,14 @@ import kotlin.concurrent.thread
  */
 class AudioCapture(
     private val sampleRate: Int = 16000,
-    private val frameSamples: Int = 1280
+    private val frameSamples: Int = 1280,
+    /** Software-Verstärkung (1.0 = aus). Ersetzt fehlendes Hardware-AGC für Far-field. */
+    gain: Float = 1.0f,
+    /** NoiseSuppressor aktivieren (falls Hardware verfügbar). */
+    private val noiseSuppression: Boolean = true
 ) {
+    /** Live änderbar (VoiceService.applySettings) — wird pro Frame ausgewertet, kein Neustart nötig. */
+    @Volatile var gain: Float = gain
     @Volatile private var running = false
     private var recorder: AudioRecord? = null
     private var worker: Thread? = null
@@ -54,9 +60,11 @@ class AudioCapture(
             aec = AcousticEchoCanceler.create(rec.audioSessionId)?.apply { enabled = true }
             Log.d(TAG, "AcousticEchoCanceler aktiviert")
         }
-        if (NoiseSuppressor.isAvailable()) {
+        if (noiseSuppression && NoiseSuppressor.isAvailable()) {
             ns = NoiseSuppressor.create(rec.audioSessionId)?.apply { enabled = true }
             Log.d(TAG, "NoiseSuppressor aktiviert")
+        } else if (!noiseSuppression) {
+            Log.d(TAG, "NoiseSuppressor per Einstellung deaktiviert")
         }
         // AutomaticGainControl: hebt leise/entfernte Sprache → bessere Far-field-Erkennung.
         if (AutomaticGainControl.isAvailable()) {
@@ -65,14 +73,24 @@ class AudioCapture(
         } else {
             Log.d(TAG, "AutomaticGainControl nicht verfügbar")
         }
+        if (gain > 1.0f) Log.d(TAG, "Software-Mic-Gain aktiv: ${gain}x")
         worker = thread(name = "audio-capture") {
             val buf = ShortArray(frameSamples)
             while (running) {
                 val n = rec.read(buf, 0, buf.size)
                 if (n > 0) {
-                    onFrame(if (n == buf.size) buf.copyOf() else buf.copyOf(n))
+                    val frame = if (n == buf.size) buf.copyOf() else buf.copyOf(n)
+                    if (gain > 1.0f) applyGain(frame)
+                    onFrame(frame)
                 }
             }
+        }
+    }
+
+    /** Verstärkt Samples mit Peak-Clipping in-place (int16-Bereich). */
+    private fun applyGain(frame: ShortArray) {
+        for (i in frame.indices) {
+            frame[i] = (frame[i] * gain).toInt().coerceIn(-32768, 32767).toShort()
         }
     }
 

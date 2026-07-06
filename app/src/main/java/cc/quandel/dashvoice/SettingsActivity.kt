@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.SeekBar
 import android.widget.Spinner
@@ -57,12 +58,49 @@ class SettingsActivity : AppCompatActivity() {
         // ── HA token + sensor IDs ──
         val haToken = findViewById<EditText>(R.id.haToken)
         val sensors = findViewById<EditText>(R.id.screensaverSensors)
+        val brainUrl = findViewById<EditText>(R.id.screensaverBrainUrl)
+        val brainZoom = findViewById<EditText>(R.id.screensaverZoomDistance)
         haToken.setText(prefs.haToken)
         sensors.setText(prefs.screensaverSensors)
+        brainUrl.setText(prefs.screensaverBrainUrl)
+        brainZoom.setText(prefs.screensaverZoomDistance)
+
+        // ── Mic-Gain seekbar (Far-field): 0..500 → 1.0..6.0× ──
+        val micGainLabel = findViewById<TextView>(R.id.micGainLabel)
+        val micGainBar   = findViewById<SeekBar>(R.id.micGain)
+        micGainBar.progress = ((prefs.micGain - 1.0f) * 100f).toInt().coerceIn(0, 500)
+        micGainLabel.text = "Mikrofon-Verstärkung: ${"%.1f".format(prefs.micGain)}×"
+        micGainBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
+                micGainLabel.text = "Mikrofon-Verstärkung: ${"%.1f".format(progress / 100f + 1.0f)}×"
+            }
+            override fun onStartTrackingTouch(sb: SeekBar) {}
+            override fun onStopTrackingTouch(sb: SeekBar) {}
+        })
+
+        // ── Wake-Empfindlichkeit seekbar: progress 0..60, RECHTS = empfindlicher ──
+        // Anzeige = Empfindlichkeit in % (rechts=100%); intern invertiert auf wakeThreshold 0.80..0.20.
+        val wakeThLabel = findViewById<TextView>(R.id.wakeThresholdLabel)
+        val wakeThBar   = findViewById<SeekBar>(R.id.wakeThreshold)
+        fun wakeThLabelText(progress: Int) =
+            "Wake-Empfindlichkeit: ${progress * 100 / 60}% (Schwelle ${"%.2f".format(0.80f - progress / 100f)})"
+        wakeThBar.progress = ((0.80f - prefs.wakeThreshold) * 100f).toInt().coerceIn(0, 60)
+        wakeThLabel.text = wakeThLabelText(wakeThBar.progress)
+        wakeThBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
+                wakeThLabel.text = wakeThLabelText(progress)
+            }
+            override fun onStartTrackingTouch(sb: SeekBar) {}
+            override fun onStopTrackingTouch(sb: SeekBar) {}
+        })
+
+        // ── NoiseSuppressor toggle ──
+        val noiseSuppression = findViewById<CheckBox>(R.id.noiseSuppression)
+        noiseSuppression.isChecked = prefs.noiseSuppressionEnabled
 
         // ── Animation style ──
         val animSpinner = findViewById<Spinner>(R.id.animationStyle)
-        val animOptions = listOf("Ripple Orb", "Frequenz", "Neural", "Vortex", "Geometrie", "Aurora")
+        val animOptions = listOf("Ripple Orb", "Frequenz", "Neural", "Vortex", "Geometrie", "Aurora", "Gesicht (Blase)")
         animSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, animOptions)
             .also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
         animSpinner.setSelection(prefs.animationStyle.coerceIn(0, animOptions.size - 1))
@@ -99,9 +137,16 @@ class SettingsActivity : AppCompatActivity() {
             prefs.screensaverDelayMs  = screensaverOptions[spinner.selectedItemPosition].second
             prefs.haToken             = haToken.text.toString().trim()
             prefs.screensaverSensors  = sensors.text.toString().trim()
+            prefs.screensaverBrainUrl = brainUrl.text.toString().trim()
+            prefs.screensaverZoomDistance = brainZoom.text.toString().trim()
             prefs.ttsVolume           = volumeBar.progress
+            prefs.micGain             = micGainBar.progress / 100f + 1.0f
+            prefs.wakeThreshold       = 0.80f - wakeThBar.progress / 100f
+            prefs.noiseSuppressionEnabled = noiseSuppression.isChecked
             prefs.animationStyle      = animSpinner.selectedItemPosition
-            Toast.makeText(this, "Gespeichert – App neu starten", Toast.LENGTH_LONG).show()
+            // Audio-Einstellungen (Empfindlichkeit/Gain/NS) sofort an den laufenden Dienst übergeben.
+            VoiceService.applySettings(this)
+            Toast.makeText(this, "Gespeichert – Audio sofort aktiv", Toast.LENGTH_SHORT).show()
             finish()
         }
     }

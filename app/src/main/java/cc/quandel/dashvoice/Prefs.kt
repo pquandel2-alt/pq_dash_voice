@@ -24,9 +24,20 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_WAKE, DEFAULT_WAKE) ?: DEFAULT_WAKE
         set(v) = sp.edit().putString(KEY_WAKE, v).apply()
 
+    /** Far-field-Default 0.40 (niedriger = empfindlicher). UI-Regler rechts = empfindlicher. */
     var wakeThreshold: Float
-        get() = sp.getFloat(KEY_THRESHOLD, 0.5f)
+        get() = sp.getFloat(KEY_THRESHOLD, 0.4f)
         set(v) = sp.edit().putFloat(KEY_THRESHOLD, v).apply()
+
+    /** Software-Mikrofon-Verstärkung (1.0–6.0) als Ersatz für fehlendes Hardware-AGC. 1.0 = unverändert. */
+    var micGain: Float
+        get() = sp.getFloat(KEY_MIC_GAIN, 1.0f)
+        set(v) = sp.edit().putFloat(KEY_MIC_GAIN, v).apply()
+
+    /** NoiseSuppressor aktiv. Abschaltbar als Far-field-Test (NS kann entfernte Sprache dämpfen). */
+    var noiseSuppressionEnabled: Boolean
+        get() = sp.getBoolean(KEY_NOISE_SUPPRESSION, true)
+        set(v) = sp.edit().putBoolean(KEY_NOISE_SUPPRESSION, v).apply()
 
     var screensaverDelayMs: Long
         get() = sp.getLong(KEY_SCREENSAVER_DELAY, DEFAULT_SCREENSAVER_DELAY)
@@ -40,12 +51,31 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_SCREENSAVER_SENSORS, "") ?: ""
         set(v) = sp.edit().putString(KEY_SCREENSAVER_SENSORS, v).apply()
 
+    /**
+     * URL für den Brain-Graph-Screensaver (Live-3D-Graph vom HA-Add-on).
+     * Leer = klassischer Uhr-Screensaver. Gesetzt (z. B. http://192.168.178.101:8099/?kiosk)
+     * = Vollbild-Graph statt Uhr.
+     */
+    var screensaverBrainUrl: String
+        get() = sp.getString(KEY_SAVER_BRAIN_URL, "") ?: ""
+        set(v) = sp.edit().putString(KEY_SAVER_BRAIN_URL, v).apply()
+
+    /**
+     * Fester Kamera-Zoom-Abstand für den Brain-Graph-Screensaver (als &zoom=
+     * an die Kiosk-URL angehängt). Leer = Frontend-Default (2200) verwenden.
+     * Nötig, weil die Kräfte-Simulation auf Tablet-Hardware unvorhersehbar lang
+     * braucht — ein fester, manuell getunter Wert ist sofort korrekt.
+     */
+    var screensaverZoomDistance: String
+        get() = sp.getString(KEY_SAVER_ZOOM, "") ?: ""
+        set(v) = sp.edit().putString(KEY_SAVER_ZOOM, v).apply()
+
     var ttsVolume: Int
         get() = sp.getInt(KEY_TTS_VOLUME, 80)
         set(v) = sp.edit().putInt(KEY_TTS_VOLUME, v).apply()
 
     var animationStyle: Int
-        get() = sp.getInt(KEY_ANIMATION_STYLE, 0)
+        get() = sp.getInt(KEY_ANIMATION_STYLE, 6)   // Default: Gesicht/Blase
         set(v) = sp.edit().putInt(KEY_ANIMATION_STYLE, v).apply()
 
     /** On-Device-Sofortbefehle (Vosk, an Whisper vorbei). */
@@ -100,9 +130,13 @@ class Prefs(context: Context) {
         private const val KEY_NAME = "name"
         private const val KEY_WAKE = "wake"
         private const val KEY_THRESHOLD = "threshold"
+        private const val KEY_MIC_GAIN = "mic_gain"
+        private const val KEY_NOISE_SUPPRESSION = "noise_suppression"
         private const val KEY_SCREENSAVER_DELAY = "screensaver_delay"
         private const val KEY_HA_TOKEN = "ha_token"
         private const val KEY_SCREENSAVER_SENSORS = "screensaver_sensors"
+        private const val KEY_SAVER_BRAIN_URL = "saver_brain_url"
+        private const val KEY_SAVER_ZOOM = "saver_zoom_distance"
         private const val KEY_TTS_VOLUME = "tts_volume"
         private const val KEY_ANIMATION_STYLE = "animation_style"
         private const val KEY_INSTANT_CMD = "instant_commands"

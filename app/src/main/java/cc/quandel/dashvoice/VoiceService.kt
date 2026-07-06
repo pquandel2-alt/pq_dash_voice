@@ -32,7 +32,7 @@ import java.nio.ByteOrder
 
 class VoiceService : Service(), WyomingServer.Listener {
 
-    private enum class State { IDLE, RECOGNIZING, STREAMING, SPEAKING }
+    enum class State { IDLE, RECOGNIZING, STREAMING, SPEAKING }
 
     @Volatile private var state = State.IDLE
     @Volatile private var satelliteActive = false
@@ -49,6 +49,8 @@ class VoiceService : Service(), WyomingServer.Listener {
     @Volatile private var ignoreTtsChunks = false
     private var ringer: Ringer? = null
     private var battery: BatteryReporter? = null
+    // Aktuell im Capture aktiver NS-Zustand — um bei applySettings zu erkennen, ob ein Neuaufbau nötig ist.
+    private var captureNoiseSuppression = true
 
     private lateinit var prefs: Prefs
     private lateinit var capture: AudioCapture
@@ -68,6 +70,7 @@ class VoiceService : Service(), WyomingServer.Listener {
             lastTtsEndedAt = System.currentTimeMillis()
             wake.reset()
             state = State.IDLE
+            VoiceEvents.voiceState = State.IDLE
             VoiceEvents.onIdle?.invoke()
         }
     }
@@ -111,7 +114,11 @@ class VoiceService : Service(), WyomingServer.Listener {
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
         player = AudioPlayer()
-        capture = AudioCapture()
+        captureNoiseSuppression = prefs.noiseSuppressionEnabled
+        capture = AudioCapture(
+            gain = prefs.micGain,
+            noiseSuppression = captureNoiseSuppression
+        )
         wake = try {
             val d = OpenWakeWordDetector(this, prefs.wakeWord, prefs.wakeThreshold)
             if (d.available) d else NoopWakeWordDetector()
@@ -200,6 +207,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         followUpActive = followUp
         streamStartedAt = System.currentTimeMillis()
         state = State.RECOGNIZING
+        VoiceEvents.voiceState = State.RECOGNIZING
         handler.post { VoiceEvents.onWake?.invoke() }
     }
 
@@ -208,6 +216,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         if (state != State.RECOGNIZING) return
         followUpActive = false
         state = State.SPEAKING   // Mic ab jetzt ignorieren, während wir entscheiden
+        VoiceEvents.voiceState = State.SPEAKING
         Thread { decideCommand() }.start()
     }
 
@@ -219,6 +228,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         followUpActive = false
         bufferedFrames.clear()
         state = State.IDLE
+        VoiceEvents.voiceState = State.IDLE
         handler.post { VoiceEvents.onIdle?.invoke() }
     }
 
@@ -248,6 +258,7 @@ class VoiceService : Service(), WyomingServer.Listener {
                 lastTtsEndedAt = System.currentTimeMillis()
                 bufferedFrames.clear()
                 state = State.IDLE
+                VoiceEvents.voiceState = State.IDLE
                 handler.post { VoiceEvents.onCommandDone?.invoke("") }
                 maybeStartFollowUp()
                 return
@@ -275,6 +286,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         abandonTtsFocus()
         Thread { server.sendPlayed() }.start()
         state = State.IDLE
+        VoiceEvents.voiceState = State.IDLE
         lastTtsEndedAt = 0L
         startRecognizing()
     }
@@ -289,6 +301,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         lastTtsEndedAt = System.currentTimeMillis()
         bufferedFrames.clear()
         state = State.IDLE
+        VoiceEvents.voiceState = State.IDLE
         handler.post { VoiceEvents.onTimerSet?.invoke(label) }
         maybeStartFollowUp()
     }
@@ -317,6 +330,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     private fun fallbackToPipeline() {
         if (!server.isConnected) {
             bufferedFrames.clear(); state = State.IDLE
+            VoiceEvents.voiceState = State.IDLE
             handler.post { VoiceEvents.onIdle?.invoke() }
             return
         }
@@ -328,6 +342,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         bufferedFrames.clear()
         server.sendAudioStop()
         state = State.SPEAKING
+        VoiceEvents.voiceState = State.SPEAKING
         handler.postDelayed(ttsTimeoutRunnable, TTS_TIMEOUT_MS)
     }
 
@@ -343,6 +358,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         server.sendAudioStart()
         streamStartedAt = System.currentTimeMillis()
         state = State.STREAMING
+        VoiceEvents.voiceState = State.STREAMING
         handler.post { VoiceEvents.onWake?.invoke() }
     }
 
@@ -352,6 +368,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         Log.i(TAG, "streaming beendet -> audio-stop")
         server.sendAudioStop()
         state = State.SPEAKING
+        VoiceEvents.voiceState = State.SPEAKING
         handler.postDelayed(ttsTimeoutRunnable, TTS_TIMEOUT_MS)
     }
 
@@ -400,15 +417,19 @@ class VoiceService : Service(), WyomingServer.Listener {
     override fun onRunSatellite() { satelliteActive = true; Log.i(TAG, "run-satellite") }
     override fun onPauseSatellite() {
         satelliteActive = false; abandonTtsFocus(); state = State.IDLE
+        VoiceEvents.voiceState = State.IDLE
         handler.post { VoiceEvents.onIdle?.invoke() }
     }
     override fun onClientConnected() {
         Log.i(TAG, "HA connected")
+        VoiceEvents.connected = true
         handler.post { VoiceEvents.onConnected?.invoke() }
     }
     override fun onClientDisconnected() {
         satelliteActive = false; abandonTtsFocus(); state = State.IDLE
+        VoiceEvents.voiceState = State.IDLE
         Log.i(TAG, "HA disconnected")
+        VoiceEvents.connected = false
         handler.post {
             VoiceEvents.onDisconnected?.invoke()
             VoiceEvents.onIdle?.invoke()
@@ -436,10 +457,28 @@ class VoiceService : Service(), WyomingServer.Listener {
         ignoreTtsChunks = false
         requestTtsFocus()
         state = State.SPEAKING
+        VoiceEvents.voiceState = State.SPEAKING
         player.start(rate, channels, width, prefs.ttsVolume / 100f)
     }
 
-    override fun onTtsAudioChunk(pcm: ByteArray) { if (!ignoreTtsChunks) player.write(pcm) }
+    override fun onTtsAudioChunk(pcm: ByteArray) {
+        if (ignoreTtsChunks) return
+        player.write(pcm)
+        val level = rms16(pcm)
+        handler.post { VoiceEvents.onTtsLevel?.invoke(level) }
+    }
+
+    /** RMS-Pegel (0..1) eines 16-bit-PCM-Chunks (Little-Endian) für die Mund-/Lippensync-Animation. */
+    private fun rms16(pcm: ByteArray): Float {
+        var sum = 0.0; var n = 0; var i = 0
+        while (i + 1 < pcm.size) {
+            val s = (pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xFF)  // signed 16-bit LE
+            sum += (s * s).toDouble(); n++; i += 2
+        }
+        if (n == 0) return 0f
+        val rms = Math.sqrt(sum / n) / 32768.0
+        return (rms * 4.0).coerceIn(0.0, 1.0).toFloat()   // Sprache hat niedrigen RMS → anheben
+    }
 
     override fun onTtsAudioStop() {
         Log.i(TAG, "TTS audio-stop — draining buffer")
@@ -450,6 +489,7 @@ class VoiceService : Service(), WyomingServer.Listener {
             lastTtsEndedAt = System.currentTimeMillis()
             wake.reset()
             state = State.IDLE
+            VoiceEvents.voiceState = State.IDLE
             VoiceEvents.onIdle?.invoke()
             Thread { server.sendPlayed() }.start()
             maybeStartFollowUp()
@@ -459,6 +499,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     override fun onError(text: String) {
         Log.w(TAG, "pipeline error: $text")
         abandonTtsFocus(); state = State.IDLE
+        VoiceEvents.voiceState = State.IDLE
         handler.post { VoiceEvents.onIdle?.invoke() }
     }
 
@@ -470,6 +511,7 @@ class VoiceService : Service(), WyomingServer.Listener {
             ACTION_TALK -> Thread { triggerPipeline() }.start()
             TimerReceiver.ACTION_TIMER -> ringTimer()
             ACTION_TIMER_STOP -> stopTimerRing()
+            ACTION_APPLY_SETTINGS -> applySettings()
         }
         return START_STICKY
     }
@@ -519,6 +561,24 @@ class VoiceService : Service(), WyomingServer.Listener {
         }
     }
 
+    /**
+     * Übernimmt geänderte Audio-Einstellungen LIVE, ohne Service-Neustart (von SettingsActivity getriggert).
+     * Wake-Empfindlichkeit (Threshold) und Mic-Gain wirken sofort; NoiseSuppression ist an die Audio-Session
+     * gebunden und braucht einen kurzen Capture-Neuaufbau, daher nur bei tatsächlicher Änderung.
+     */
+    private fun applySettings() {
+        (wake as? OpenWakeWordDetector)?.threshold = prefs.wakeThreshold
+        capture.gain = prefs.micGain
+        if (prefs.noiseSuppressionEnabled != captureNoiseSuppression) {
+            captureNoiseSuppression = prefs.noiseSuppressionEnabled
+            capture.stop()
+            capture = AudioCapture(gain = prefs.micGain, noiseSuppression = captureNoiseSuppression)
+            capture.start { frame -> onAudioFrame(frame) }
+        }
+        Log.i(TAG, "Einstellungen live übernommen: threshold=${prefs.wakeThreshold} " +
+            "gain=${prefs.micGain} ns=${prefs.noiseSuppressionEnabled}")
+    }
+
     companion object {
         private const val TAG = "VoiceService"
         private const val CHANNEL = "dashvoice"
@@ -536,6 +596,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val TIMER_AUTOSTOP_MS = 120_000L      // Wecker stoppt spätestens nach 2 min
         const val ACTION_TALK = "cc.quandel.dashvoice.TALK"
         const val ACTION_TIMER_STOP = "cc.quandel.dashvoice.TIMER_STOP"
+        const val ACTION_APPLY_SETTINGS = "cc.quandel.dashvoice.APPLY_SETTINGS"
 
         fun start(ctx: Context) {
             val i = Intent(ctx, VoiceService::class.java)
@@ -545,6 +606,13 @@ class VoiceService : Service(), WyomingServer.Listener {
 
         fun talk(ctx: Context) {
             val i = Intent(ctx, VoiceService::class.java).setAction(ACTION_TALK)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
+            else ctx.startService(i)
+        }
+
+        /** Geänderte Audio-Einstellungen live an den laufenden Dienst übergeben (kein Neustart nötig). */
+        fun applySettings(ctx: Context) {
+            val i = Intent(ctx, VoiceService::class.java).setAction(ACTION_APPLY_SETTINGS)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
             else ctx.startService(i)
         }

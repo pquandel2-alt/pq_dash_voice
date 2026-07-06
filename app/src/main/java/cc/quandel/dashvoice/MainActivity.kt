@@ -40,6 +40,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: Prefs
     private lateinit var webView: WebView
     private lateinit var screensaver: View
+    private lateinit var saverWebView: WebView
+    private lateinit var clockBlock: View
     private lateinit var clock: TextView
     private lateinit var screensaverDate: TextView
     private lateinit var sensor1: TextView
@@ -100,6 +102,8 @@ class MainActivity : AppCompatActivity() {
 
         webView             = findViewById(R.id.webview)
         screensaver         = findViewById(R.id.screensaver)
+        saverWebView        = findViewById(R.id.saverWebView)
+        clockBlock          = findViewById(R.id.clockBlock)
         clock               = findViewById(R.id.clock)
         screensaverDate     = findViewById(R.id.screensaverDate)
         sensor1             = findViewById(R.id.sensor1)
@@ -125,6 +129,24 @@ class MainActivity : AppCompatActivity() {
         }
         webView.webViewClient = WebViewClient()
         webView.loadUrl(prefs.dashboardUrl)
+
+        // Screensaver-Graph-WebView (Brain-Graph-Add-on, ?kiosk). Lädt erst beim Anzeigen.
+        saverWebView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            mediaPlaybackRequiresUserGesture = false
+            cacheMode = WebSettings.LOAD_DEFAULT
+        }
+        saverWebView.webViewClient = WebViewClient()
+        saverWebView.setBackgroundColor(Color.BLACK)
+        // Kiosk: jede Berührung des Graphen beendet den Screensaver.
+        saverWebView.setOnTouchListener { v, ev ->
+            if (ev.action == android.view.MotionEvent.ACTION_DOWN) {
+                v.performClick()
+                dismissScreensaver()
+            }
+            true
+        }
 
         findViewById<ImageButton>(R.id.micButton).apply {
             setOnClickListener {
@@ -169,6 +191,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun subscribeVoiceEvents() {
+        // Status-Dot sofort aus dem echten Zustand setzen — eine nach dem 04:00-Relaunch neu
+        // erzeugte Activity bekommt sonst kein onConnected-Event (Verbindung bestand durchgehend)
+        // und bliebe fälschlich auf Default-Rot.
+        setStatusDot(connected = VoiceEvents.connected)
+
+        // Analog: VoiceAnimationView aus dem echten Zustand initialisieren. Nach dem 04:00-Relaunch
+        // hat die neue Activity ohne Initialisierung kein onWake-Event bekommen (wenn gerade Sprachinteraktion lief),
+        // und der Avatar bliebe unsichtbar. Deshalb hier den Service-State abfragen.
+        when (VoiceEvents.voiceState) {
+            VoiceService.State.RECOGNIZING -> {
+                voiceAnimation.visibility = View.VISIBLE  // WICHTIG: aus GONE zurücksetzen nach Relaunch
+                voiceAnimation.setState(VoiceAnimationView.State.LISTENING)
+                voiceAnimation.startAnimation()
+                voiceOverlay.visibility = View.VISIBLE
+            }
+            VoiceService.State.STREAMING -> {
+                voiceAnimation.visibility = View.VISIBLE  // WICHTIG: aus GONE zurücksetzen nach Relaunch
+                voiceAnimation.setState(VoiceAnimationView.State.LISTENING)
+                voiceAnimation.startAnimation()
+                voiceOverlay.visibility = View.VISIBLE
+            }
+            VoiceService.State.SPEAKING -> {
+                voiceAnimation.visibility = View.VISIBLE  // WICHTIG: aus GONE zurücksetzen nach Relaunch
+                voiceAnimation.setState(VoiceAnimationView.State.SPEAKING)
+                voiceAnimation.startAnimation()
+                voiceOverlay.visibility = View.VISIBLE
+            }
+            else -> {} // IDLE: Avatar bleibt unsichtbar
+        }
+
         VoiceEvents.onConnected = {
             setStatusDot(connected = true)
         }
@@ -206,6 +258,9 @@ class MainActivity : AppCompatActivity() {
             }
             voiceStateText.text = "Antwortet…"
             voiceAnimation.setState(VoiceAnimationView.State.SPEAKING)
+        }
+        VoiceEvents.onTtsLevel = { level ->
+            voiceAnimation.setMouthLevel(level)
         }
         VoiceEvents.onCommandDone = { _ ->
             // Sofortbefehl ausgeführt: grüne „Erledigt"-Animation kurz zeigen, dann ausblenden (stumm).
@@ -332,22 +387,40 @@ class MainActivity : AppCompatActivity() {
         if (delayMs < Long.MAX_VALUE) ui.postDelayed(showSaver, delayMs)
     }
 
-    private fun showScreensaver() {
-        val now = Date()
-        clock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
-        screensaverDate.text = SimpleDateFormat("EEEE, d. MMMM", Locale.GERMAN).format(now)
+    /** Hängt &zoom=<Wert> (bzw. ?zoom= falls die URL noch keine Query hat) an, wenn gesetzt. */
+    private fun withZoomParam(url: String, zoom: String): String {
+        if (zoom.isEmpty()) return url
+        val sep = if (url.contains('?')) "&" else "?"
+        return "$url${sep}zoom=$zoom"
+    }
 
-        // Bildschirm auf ~3% dimmen
+    private fun showScreensaver() {
+        val brainUrl = prefs.screensaverBrainUrl
         val lp = window.attributes
-        lp.screenBrightness = 0.03f
+
+        if (brainUrl.isNotEmpty()) {
+            // Brain-Graph-Modus: Live-3D-Graph in Vollbild, normale Helligkeit (soll sichtbar sein).
+            clockBlock.visibility = View.GONE
+            saverWebView.visibility = View.VISIBLE
+            saverWebView.onResume()
+            saverWebView.loadUrl(withZoomParam(brainUrl, prefs.screensaverZoomDistance))
+            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        } else {
+            // Uhr-Modus: Uhr + Datum + Sensoren, Bildschirm auf ~3% dimmen.
+            saverWebView.visibility = View.GONE
+            clockBlock.visibility = View.VISIBLE
+            val now = Date()
+            clock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
+            screensaverDate.text = SimpleDateFormat("EEEE, d. MMMM", Locale.GERMAN).format(now)
+            lp.screenBrightness = 0.03f
+            ui.post(tickClock)
+            startSensorFetcher()
+        }
         window.attributes = lp
 
         screensaver.alpha = 0f
         screensaver.visibility = View.VISIBLE
         screensaver.animate().alpha(1f).setDuration(600).start()
-
-        ui.post(tickClock)
-        startSensorFetcher()
     }
 
     private fun dismissScreensaver() {
@@ -358,6 +431,12 @@ class MainActivity : AppCompatActivity() {
 
         screensaver.animate().alpha(0f).setDuration(400).withEndAction {
             screensaver.visibility = View.GONE
+            // Graph-WebView stoppen (about:blank beendet Three.js/rAF) → schont Akku/GPU.
+            if (saverWebView.visibility == View.VISIBLE) {
+                saverWebView.loadUrl("about:blank")
+                saverWebView.onPause()
+                saverWebView.visibility = View.GONE
+            }
             val lp = window.attributes
             lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
             window.attributes = lp
@@ -460,9 +539,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         AppLog.listener = null
+        // Laufende View-Animationen abbrechen, bevor wir die Callbacks nullen.
+        // Sonst kann voiceOverlay.animate().withEndAction{} noch nach onDestroy nachlaufen.
+        voiceOverlay.animate().cancel()
+        // Callbacks nullen (schnell, um keine Events von der alten Activity zu bearbeiten)
         VoiceEvents.onWake = null
         VoiceEvents.onTranscript = null
         VoiceEvents.onResponse = null
+        VoiceEvents.onTtsLevel = null
         VoiceEvents.onCommandDone = null
         VoiceEvents.onTimerSet = null
         VoiceEvents.onTimerRinging = null

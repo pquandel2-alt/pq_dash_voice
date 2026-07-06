@@ -92,66 +92,80 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <LinearLayout
+    <FrameLayout
         android:id="@+id/screensaver"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@android:color/black"
-        android:gravity="center"
-        android:orientation="vertical"
         android:visibility="gone">
 
-        <TextView
-            android:id="@+id/clock"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="00:00"
-            android:textColor="#FFCCCCCC"
-            android:textSize="96sp" />
+        <!-- Brain-Graph-Screensaver: Live-3D-Graph (nur sichtbar, wenn URL gesetzt) -->
+        <WebView
+            android:id="@+id/saverWebView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/screensaverDate"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:textColor="#FF999999"
-            android:textSize="22sp" />
-
+        <!-- Klassischer Uhr-Screensaver (Fallback, wenn keine Graph-URL gesetzt) -->
         <LinearLayout
-            android:id="@+id/sensorContainer"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:orientation="vertical"
-            android:gravity="center">
+            android:id="@+id/clockBlock"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical">
 
             <TextView
-                android:id="@+id/sensor1"
+                android:id="@+id/clock"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#FF999999"
-                android:textSize="18sp"
-                android:visibility="gone" />
+                android:text="00:00"
+                android:textColor="#FFCCCCCC"
+                android:textSize="96sp" />
 
             <TextView
-                android:id="@+id/sensor2"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textColor="#FF999999"
-                android:textSize="18sp"
-                android:visibility="gone" />
-
-            <TextView
-                android:id="@+id/sensor3"
+                android:id="@+id/screensaverDate"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:textColor="#FF999999"
-                android:textSize="18sp"
-                android:visibility="gone" />
+                android:textSize="22sp" />
+
+            <LinearLayout
+                android:id="@+id/sensorContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/sensor1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FF999999"
+                    android:textSize="18sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/sensor2"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="#FF999999"
+                    android:textSize="18sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/sensor3"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="#FF999999"
+                    android:textSize="18sp"
+                    android:visibility="gone" />
+            </LinearLayout>
         </LinearLayout>
-    </LinearLayout>
+    </FrameLayout>
 
     <ScrollView
         android:id="@+id/logScroll"
