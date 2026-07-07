@@ -70,6 +70,30 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_SAVER_ZOOM, "") ?: ""
         set(v) = sp.edit().putString(KEY_SAVER_ZOOM, v).apply()
 
+    /**
+     * Zeitfenster (HH:mm), in dem statt des Brain-Graph-Screensavers nur die Uhr gezeigt
+     * wird (z. B. nachts, damit Graph/WebView nicht die ganze Nacht laufen). Leer = kein
+     * Zeitfenster, Graph läuft immer, solange screensaverBrainUrl gesetzt ist. Darf über
+     * Mitternacht hinausgehen (z. B. 22:00–06:00).
+     */
+    var screensaverClockFrom: String
+        get() = sp.getString(KEY_SAVER_CLOCK_FROM, "") ?: ""
+        set(v) = sp.edit().putString(KEY_SAVER_CLOCK_FROM, v).apply()
+
+    var screensaverClockTo: String
+        get() = sp.getString(KEY_SAVER_CLOCK_TO, "") ?: ""
+        set(v) = sp.edit().putString(KEY_SAVER_CLOCK_TO, v).apply()
+
+    /**
+     * Optionale HA-Entität (z. B. ein input_boolean), die per Automation gesetzt werden kann,
+     * um die Uhr/Graph-Auswahl unabhängig vom Zeitfenster zu erzwingen: Zustand "on" erzwingt
+     * die Uhr, jeder andere Zustand erzwingt den Graph (falls screensaverBrainUrl gesetzt ist).
+     * Leer = deaktiviert, es gilt weiterhin nur das Zeitfenster.
+     */
+    var screensaverClockEntity: String
+        get() = sp.getString(KEY_SAVER_CLOCK_ENTITY, "") ?: ""
+        set(v) = sp.edit().putString(KEY_SAVER_CLOCK_ENTITY, v).apply()
+
     var ttsVolume: Int
         get() = sp.getInt(KEY_TTS_VOLUME, 80)
         set(v) = sp.edit().putInt(KEY_TTS_VOLUME, v).apply()
@@ -137,6 +161,9 @@ class Prefs(context: Context) {
         private const val KEY_SCREENSAVER_SENSORS = "screensaver_sensors"
         private const val KEY_SAVER_BRAIN_URL = "saver_brain_url"
         private const val KEY_SAVER_ZOOM = "saver_zoom_distance"
+        private const val KEY_SAVER_CLOCK_FROM = "saver_clock_from"
+        private const val KEY_SAVER_CLOCK_TO = "saver_clock_to"
+        private const val KEY_SAVER_CLOCK_ENTITY = "saver_clock_entity"
         private const val KEY_TTS_VOLUME = "tts_volume"
         private const val KEY_ANIMATION_STYLE = "animation_style"
         private const val KEY_INSTANT_CMD = "instant_commands"

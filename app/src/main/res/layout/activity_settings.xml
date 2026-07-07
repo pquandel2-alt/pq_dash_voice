@@ -135,6 +135,47 @@
             android:inputType="number"
             android:textSize="12sp" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Uhr-Zeitfenster statt Graph (HH:mm, leer = kein Zeitfenster)" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <EditText
+                android:id="@+id/screensaverClockFrom"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:hint="von 22:00"
+                android:inputType="datetime"
+                android:textSize="12sp" />
+            <EditText
+                android:id="@+id/screensaverClockTo"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="bis 06:00"
+                android:inputType="datetime"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="HA-Entität zum Erzwingen (optional, überstimmt Zeitfenster): Zustand &quot;on&quot; = Uhr, sonst = Graph" />
+        <EditText
+            android:id="@+id/screensaverClockEntity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="input_boolean.tablet_uhr_erzwingen"
+            android:inputType="text"
+            android:textSize="12sp" />
+
         <!-- ── Audio ── -->
         <View
             android:layout_width="match_parent"

@@ -30,9 +30,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import cc.quandel.dashvoice.util.AppLog
+import org.json.JSONObject
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import javax.net.ssl.HttpsURLConnection
+import kotlin.concurrent.thread
 
 /** Kiosk shell: full-screen Lovelace WebView, tap-to-talk, clock screensaver with HA sensors. */
 class MainActivity : AppCompatActivity() {
@@ -90,6 +94,21 @@ class MainActivity : AppCompatActivity() {
             clock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
             screensaverDate.text = SimpleDateFormat("EEEE, d. MMMM", Locale.GERMAN).format(now)
             ui.postDelayed(this, 10_000)
+        }
+    }
+
+    /** Zuletzt bekannter Zustand von prefs.screensaverClockEntity ("on" = Uhr erzwingen). */
+    @Volatile private var clockForced = false
+    private val pollClockEntity = object : Runnable {
+        override fun run() {
+            val entity = prefs.screensaverClockEntity
+            val token = prefs.haToken
+            if (entity.isNotEmpty() && token.isNotBlank()) {
+                fetchEntityState(prefs.dashboardUrl, token, entity) { state ->
+                    clockForced = state == "on"
+                }
+            }
+            ui.postDelayed(this, CLOCK_ENTITY_POLL_MS)
         }
     }
 
@@ -176,6 +195,7 @@ class MainActivity : AppCompatActivity() {
         resetScreensaverTimer()
         ui.postDelayed(periodicReload, WEBVIEW_RELOAD_MS)
         ui.post(tickTimer)   // läuft ein Timer noch (auch nach App-Neustart)? → Chip zeigen
+        ui.post(pollClockEntity)
     }
 
     /** Verbleibende Zeit als mm:ss bzw. h:mm:ss (aufgerundet auf Sekunden). */
@@ -188,6 +208,27 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val WEBVIEW_RELOAD_MS = 6L * 60 * 60 * 1000  // alle 6h Dashboard neu laden
+        private const val CLOCK_ENTITY_POLL_MS = 15_000L
+    }
+
+    /** Fragt einmalig den Zustand einer HA-Entität per REST ab (Ergebnis kommt im Main-Thread an). */
+    private fun fetchEntityState(haUrl: String, token: String, entityId: String, callback: (String?) -> Unit) {
+        thread(name = "ha-clock-entity-fetch") {
+            val state = try {
+                val base = haUrl.trimEnd('/')
+                val conn = URL("$base/api/states/$entityId").openConnection() as HttpsURLConnection
+                conn.setRequestProperty("Authorization", "Bearer $token")
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                val json = JSONObject(conn.inputStream.bufferedReader().readText())
+                conn.disconnect()
+                json.optString("state", null)
+            } catch (e: Exception) {
+                AppLog.w("ClockEntity", "fetch $entityId: ${e.message}")
+                null
+            }
+            ui.post { callback(state) }
+        }
     }
 
     private fun subscribeVoiceEvents() {
@@ -394,11 +435,34 @@ class MainActivity : AppCompatActivity() {
         return "$url${sep}zoom=$zoom"
     }
 
+    /** Prüft, ob "jetzt" innerhalb des konfigurierten Uhr-Zeitfensters liegt (überspringt Mitternacht korrekt). */
+    private fun isWithinClockWindow(): Boolean {
+        val fromMin = parseTimeToMinutes(prefs.screensaverClockFrom) ?: return false
+        val toMin = parseTimeToMinutes(prefs.screensaverClockTo) ?: return false
+        val cal = java.util.Calendar.getInstance()
+        val nowMin = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE)
+        return if (fromMin <= toMin) nowMin in fromMin until toMin
+        else nowMin >= fromMin || nowMin < toMin
+    }
+
+    private fun parseTimeToMinutes(s: String): Int? {
+        val parts = s.split(":")
+        if (parts.size != 2) return null
+        val h = parts[0].toIntOrNull() ?: return null
+        val m = parts[1].toIntOrNull() ?: return null
+        if (h !in 0..23 || m !in 0..59) return null
+        return h * 60 + m
+    }
+
     private fun showScreensaver() {
         val brainUrl = prefs.screensaverBrainUrl
+        val entityConfigured = prefs.screensaverClockEntity.isNotEmpty()
+        // Ist die Erzwingen-Entität gesetzt, entscheidet nur sie (unabhängig von der Uhrzeit) —
+        // sonst greift wie bisher das Zeitfenster.
+        val showClock = if (entityConfigured) clockForced else isWithinClockWindow()
         val lp = window.attributes
 
-        if (brainUrl.isNotEmpty()) {
+        if (brainUrl.isNotEmpty() && !showClock) {
             // Brain-Graph-Modus: Live-3D-Graph in Vollbild, normale Helligkeit (soll sichtbar sein).
             clockBlock.visibility = View.GONE
             saverWebView.visibility = View.VISIBLE

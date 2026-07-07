@@ -60,10 +60,16 @@ class SettingsActivity : AppCompatActivity() {
         val sensors = findViewById<EditText>(R.id.screensaverSensors)
         val brainUrl = findViewById<EditText>(R.id.screensaverBrainUrl)
         val brainZoom = findViewById<EditText>(R.id.screensaverZoomDistance)
+        val clockFrom = findViewById<EditText>(R.id.screensaverClockFrom)
+        val clockTo = findViewById<EditText>(R.id.screensaverClockTo)
+        val clockEntity = findViewById<EditText>(R.id.screensaverClockEntity)
         haToken.setText(prefs.haToken)
         sensors.setText(prefs.screensaverSensors)
         brainUrl.setText(prefs.screensaverBrainUrl)
         brainZoom.setText(prefs.screensaverZoomDistance)
+        clockFrom.setText(prefs.screensaverClockFrom)
+        clockTo.setText(prefs.screensaverClockTo)
+        clockEntity.setText(prefs.screensaverClockEntity)
 
         // ── Mic-Gain seekbar (Far-field): 0..500 → 1.0..6.0× ──
         val micGainLabel = findViewById<TextView>(R.id.micGainLabel)
@@ -139,6 +145,9 @@ class SettingsActivity : AppCompatActivity() {
             prefs.screensaverSensors  = sensors.text.toString().trim()
             prefs.screensaverBrainUrl = brainUrl.text.toString().trim()
             prefs.screensaverZoomDistance = brainZoom.text.toString().trim()
+            prefs.screensaverClockFrom = validTimeOrEmpty(clockFrom.text.toString().trim())
+            prefs.screensaverClockTo   = validTimeOrEmpty(clockTo.text.toString().trim())
+            prefs.screensaverClockEntity = clockEntity.text.toString().trim()
             prefs.ttsVolume           = volumeBar.progress
             prefs.micGain             = micGainBar.progress / 100f + 1.0f
             prefs.wakeThreshold       = 0.80f - wakeThBar.progress / 100f
@@ -149,5 +158,13 @@ class SettingsActivity : AppCompatActivity() {
             Toast.makeText(this, "Gespeichert – Audio sofort aktiv", Toast.LENGTH_SHORT).show()
             finish()
         }
+    }
+
+    /** Gibt "HH:mm" zurück, falls gültig, sonst leer (= Zeitfenster deaktiviert). */
+    private fun validTimeOrEmpty(s: String): String {
+        val m = Regex("^([01]?[0-9]|2[0-3]):([0-5][0-9])$").find(s) ?: return ""
+        val h = m.groupValues[1].toInt()
+        val min = m.groupValues[2].toInt()
+        return "%02d:%02d".format(h, min)
     }
 }
