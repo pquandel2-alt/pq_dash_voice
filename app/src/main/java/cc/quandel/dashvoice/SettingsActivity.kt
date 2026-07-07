@@ -63,6 +63,8 @@ class SettingsActivity : AppCompatActivity() {
         val clockFrom = findViewById<EditText>(R.id.screensaverClockFrom)
         val clockTo = findViewById<EditText>(R.id.screensaverClockTo)
         val clockEntity = findViewById<EditText>(R.id.screensaverClockEntity)
+        val gestures = findViewById<CheckBox>(R.id.screensaverGestures)
+        gestures.isChecked = prefs.screensaverGesturesEnabled
         haToken.setText(prefs.haToken)
         sensors.setText(prefs.screensaverSensors)
         brainUrl.setText(prefs.screensaverBrainUrl)
@@ -148,6 +150,7 @@ class SettingsActivity : AppCompatActivity() {
             prefs.screensaverClockFrom = validTimeOrEmpty(clockFrom.text.toString().trim())
             prefs.screensaverClockTo   = validTimeOrEmpty(clockTo.text.toString().trim())
             prefs.screensaverClockEntity = clockEntity.text.toString().trim()
+            prefs.screensaverGesturesEnabled = gestures.isChecked
             prefs.ttsVolume           = volumeBar.progress
             prefs.micGain             = micGainBar.progress / 100f + 1.0f
             prefs.wakeThreshold       = 0.80f - wakeThBar.progress / 100f

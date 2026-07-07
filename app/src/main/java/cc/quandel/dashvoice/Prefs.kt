@@ -94,6 +94,15 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_SAVER_CLOCK_ENTITY, "") ?: ""
         set(v) = sp.edit().putString(KEY_SAVER_CLOCK_ENTITY, v).apply()
 
+    /**
+     * Gestensteuerung im Brain-Graph-Screensaver (Handtracking über die Frontkamera,
+     * MediaPipe läuft rein clientseitig im Frontend). Default aus — verlangt eine
+     * CAMERA-Permission, die nur bei Aktivierung angefragt wird.
+     */
+    var screensaverGesturesEnabled: Boolean
+        get() = sp.getBoolean(KEY_SAVER_GESTURES, false)
+        set(v) = sp.edit().putBoolean(KEY_SAVER_GESTURES, v).apply()
+
     var ttsVolume: Int
         get() = sp.getInt(KEY_TTS_VOLUME, 80)
         set(v) = sp.edit().putInt(KEY_TTS_VOLUME, v).apply()
@@ -164,6 +173,7 @@ class Prefs(context: Context) {
         private const val KEY_SAVER_CLOCK_FROM = "saver_clock_from"
         private const val KEY_SAVER_CLOCK_TO = "saver_clock_to"
         private const val KEY_SAVER_CLOCK_ENTITY = "saver_clock_entity"
+        private const val KEY_SAVER_GESTURES = "saver_gestures_enabled"
         private const val KEY_TTS_VOLUME = "tts_volume"
         private const val KEY_ANIMATION_STYLE = "animation_style"
         private const val KEY_INSTANT_CMD = "instant_commands"

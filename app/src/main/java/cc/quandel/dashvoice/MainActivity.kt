@@ -17,6 +17,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
 import android.view.WindowManager
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -158,6 +160,23 @@ class MainActivity : AppCompatActivity() {
         }
         saverWebView.webViewClient = WebViewClient()
         saverWebView.setBackgroundColor(Color.BLACK)
+        // Kamera nur für die Gestensteuerung im Graph-Screensaver — nur gewähren,
+        // wenn der Nutzer sie in den Settings aktiviert hat (Default aus).
+        saverWebView.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest) {
+                if (prefs.screensaverGesturesEnabled &&
+                    request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                ) {
+                    request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+                } else {
+                    request.deny()
+                }
+            }
+            override fun onConsoleMessage(msg: android.webkit.ConsoleMessage): Boolean {
+                AppLog.i("SaverJS", "${msg.message()} (${msg.sourceId()}:${msg.lineNumber()})")
+                return true
+            }
+        }
         // Kiosk: jede Berührung des Graphen beendet den Screensaver.
         saverWebView.setOnTouchListener { v, ev ->
             if (ev.action == android.view.MotionEvent.ACTION_DOWN) {
@@ -435,6 +454,38 @@ class MainActivity : AppCompatActivity() {
         return "$url${sep}zoom=$zoom"
     }
 
+    /**
+     * Hängt &gestures=1 an, wenn die Gestensteuerung aktiviert UND die CAMERA-Permission
+     * bereits gewährt ist (sonst würde die WebView den getUserMedia-Zugriff nur ablehnen).
+     */
+    private fun withGesturesParam(url: String, enabled: Boolean): String {
+        if (!enabled || !hasCameraPermission()) return url
+        val sep = if (url.contains('?')) "&" else "?"
+        return "$url${sep}gestures=1"
+    }
+
+    /**
+     * Leitet die Brain-Graph-URL über einen lokalen 127.0.0.1-Proxy um, wenn die Gesten-
+     * steuerung aktiviert ist. Grund: Chromium erlaubt getUserMedia nur in einem "secure
+     * context" (https oder Host localhost/127.0.0.1) — eine rohe LAN-IP wie
+     * 192.168.178.101 zählt selbst über http nie als secure, die Kamera bliebe sonst
+     * unerreichbar. Ohne Gestensteuerung bleibt die Original-URL unverändert (kein Umweg
+     * nötig).
+     */
+    private fun withLocalProxy(url: String, gesturesEnabled: Boolean): String {
+        if (!gesturesEnabled || !hasCameraPermission()) return url
+        val uri = Uri.parse(url)
+        val host = uri.host ?: return url
+        val port = if (uri.port != -1) uri.port else 80
+        val localPort = LocalProxy.ensureStarted(host, port)
+        val builder = Uri.Builder()
+            .scheme("http")
+            .encodedAuthority("127.0.0.1:$localPort")
+            .encodedPath(uri.path ?: "/")
+        if (uri.query != null) builder.encodedQuery(uri.query)
+        return builder.build().toString()
+    }
+
     /** Prüft, ob "jetzt" innerhalb des konfigurierten Uhr-Zeitfensters liegt (überspringt Mitternacht korrekt). */
     private fun isWithinClockWindow(): Boolean {
         val fromMin = parseTimeToMinutes(prefs.screensaverClockFrom) ?: return false
@@ -467,7 +518,15 @@ class MainActivity : AppCompatActivity() {
             clockBlock.visibility = View.GONE
             saverWebView.visibility = View.VISIBLE
             saverWebView.onResume()
-            saverWebView.loadUrl(withZoomParam(brainUrl, prefs.screensaverZoomDistance))
+            val saverUrl = withGesturesParam(
+                withZoomParam(
+                    withLocalProxy(brainUrl, prefs.screensaverGesturesEnabled),
+                    prefs.screensaverZoomDistance
+                ),
+                prefs.screensaverGesturesEnabled
+            )
+            AppLog.i("Saver", "Lade Screensaver-URL: $saverUrl (gesturesEnabled=${prefs.screensaverGesturesEnabled}, camPerm=${hasCameraPermission()})")
+            saverWebView.loadUrl(saverUrl)
             lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         } else {
             // Uhr-Modus: Uhr + Datum + Sensoren, Bildschirm auf ~3% dimmen.
@@ -568,8 +627,16 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
         ) needed.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (prefs.screensaverGesturesEnabled &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED
+        ) needed.add(Manifest.permission.CAMERA)
         if (needed.isNotEmpty()) ActivityCompat.requestPermissions(this, needed.toTypedArray(), 1)
     }
+
+    private fun hasCameraPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
 
     override fun onUserInteraction() {
         super.onUserInteraction()
