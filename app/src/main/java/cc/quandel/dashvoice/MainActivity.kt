@@ -108,10 +108,29 @@ class MainActivity : AppCompatActivity() {
             if (entity.isNotEmpty() && token.isNotBlank()) {
                 fetchEntityState(prefs.dashboardUrl, token, entity) { state ->
                     clockForced = state == "on"
+                    maybeSwitchScreensaverMode()
                 }
+            } else {
+                maybeSwitchScreensaverMode()
             }
             ui.postDelayed(this, CLOCK_ENTITY_POLL_MS)
         }
+    }
+
+    /**
+     * Prüft, ob der Screensaver gerade läuft und der Modus (Graph/Uhr) noch zum
+     * Zeitfenster bzw. der Erzwingen-Entität passt — nötig, weil showScreensaver()
+     * sonst nur beim ersten Anzeigen entscheidet und ein Wechsel des Zeitfensters
+     * (z. B. 23:59 Uhr-Start) während eines bereits laufenden Graph-Screensavers
+     * sonst nie greifen würde.
+     */
+    private fun maybeSwitchScreensaverMode() {
+        if (screensaver.visibility != View.VISIBLE) return
+        if (prefs.screensaverBrainUrl.isEmpty()) return
+        val entityConfigured = prefs.screensaverClockEntity.isNotEmpty()
+        val desiredShowClock = if (entityConfigured) clockForced else isWithinClockWindow()
+        val currentlyShowingClock = clockBlock.visibility == View.VISIBLE
+        if (desiredShowClock != currentlyShowingClock) showScreensaver()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
