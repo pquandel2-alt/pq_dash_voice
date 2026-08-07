@@ -213,4 +213,43 @@
         android:textSize="22sp"
         android:textStyle="bold"
         android:visibility="gone" />
+
+    <!-- Klingel-Kamera-Overlay (vollbild Lovelace-Ansicht mit Live-Stream) -->
+    <FrameLayout
+        android:id="@+id/doorbellOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#FF000000"
+        android:visibility="gone">
+
+        <WebView
+            android:id="@+id/doorbellWebView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Schließen-Button oben rechts -->
+        <Button
+            android:id="@+id/doorbellClose"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="16dp"
+            android:text="✕"
+            android:textSize="22sp"
+            android:background="#CC333333"
+            android:textColor="#FFFFFFFF" />
+
+        <!-- Label oben links -->
+        <TextView
+            android:id="@+id/doorbellLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:layout_margin="20dp"
+            android:text="🔔 Klingel – Einfahrt"
+            android:textColor="#FFFFFFFF"
+            android:textSize="18sp"
+            android:background="#CC000000"
+            android:padding="8dp" />
+    </FrameLayout>
 </FrameLayout>

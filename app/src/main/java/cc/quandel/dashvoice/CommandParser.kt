@@ -47,6 +47,14 @@ object CommandParser {
     private fun splitTargets(s: String): List<String> =
         s.split(Regex("\\s+und\\s+|\\s*,\\s*")).map { it.trim() }.filter { it.isNotEmpty() }
 
+    /**
+     * Bidirektionaler Score: min(score(text→name), score(name→text)).
+     * Verhindert, dass kurze Script-Namen ("Nacht") auf lange Texte ("gute nacht") feuern,
+     * weil dann score(name→text) niedrig ist (z. B. "gute" hat kein Pendant in "nacht").
+     */
+    fun scoreBidirectional(text: String, name: String): Float =
+        minOf(score(text, name), score(name, text))
+
     /** Ersetzt eine Ziel-Phrase durch den ähnlichsten echten Gerätenamen (wenn ≥ Schwelle). */
     fun correct(target: String, entities: List<String>, threshold: Float): String {
         if (entities.isEmpty()) return target

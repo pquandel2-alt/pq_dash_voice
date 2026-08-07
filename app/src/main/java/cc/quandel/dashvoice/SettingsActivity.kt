@@ -73,6 +73,14 @@ class SettingsActivity : AppCompatActivity() {
         clockTo.setText(prefs.screensaverClockTo)
         clockEntity.setText(prefs.screensaverClockEntity)
 
+        // ── Klingel-Einstellungen ──
+        val doorbellEntity = findViewById<EditText>(R.id.doorbellEntity)
+        val doorbellUrl = findViewById<EditText>(R.id.doorbellCameraUrl)
+        val doorbellDismiss = findViewById<EditText>(R.id.doorbellAutoDismissSec)
+        doorbellEntity.setText(prefs.doorbellEntity)
+        doorbellUrl.setText(prefs.doorbellCameraUrl)
+        doorbellDismiss.setText(prefs.doorbellAutoDismissSec.toString())
+
         // ── Mic-Gain seekbar (Far-field): 0..500 → 1.0..6.0× ──
         val micGainLabel = findViewById<TextView>(R.id.micGainLabel)
         val micGainBar   = findViewById<SeekBar>(R.id.micGain)
@@ -151,6 +159,9 @@ class SettingsActivity : AppCompatActivity() {
             prefs.screensaverClockTo   = validTimeOrEmpty(clockTo.text.toString().trim())
             prefs.screensaverClockEntity = clockEntity.text.toString().trim()
             prefs.screensaverGesturesEnabled = gestures.isChecked
+            prefs.doorbellEntity      = doorbellEntity.text.toString().trim()
+            prefs.doorbellCameraUrl   = doorbellUrl.text.toString().trim()
+            prefs.doorbellAutoDismissSec = doorbellDismiss.text.toString().trim().toIntOrNull() ?: 30
             prefs.ttsVolume           = volumeBar.progress
             prefs.micGain             = micGainBar.progress / 100f + 1.0f
             prefs.wakeThreshold       = 0.80f - wakeThBar.progress / 100f

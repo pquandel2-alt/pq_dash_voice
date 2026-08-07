@@ -68,7 +68,13 @@ class MainActivity : AppCompatActivity() {
 
     private var sensorFetcher: HaSensorFetcher? = null
 
+    private lateinit var doorbellOverlay: View
+    private lateinit var doorbellWebView: WebView
+    @Volatile private var doorbellWasOn = false
+
     private val ui = Handler(Looper.getMainLooper())
+
+    private val dismissDoorbell = Runnable { hideDoorbell() }
 
     private val showSaver = Runnable { showScreensaver() }
     private val periodicReload = object : Runnable {
@@ -117,6 +123,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val pollDoorbellEntity = object : Runnable {
+        override fun run() {
+            val entity = prefs.doorbellEntity
+            val token = prefs.haToken
+            if (entity.isNotEmpty() && token.isNotBlank()) {
+                fetchEntityState(prefs.dashboardUrl, token, entity) { state ->
+                    val isOn = state == "on"
+                    if (isOn && !doorbellWasOn) showDoorbell()
+                    if (!isOn) doorbellWasOn = false
+                }
+            }
+            ui.postDelayed(this, DOORBELL_ENTITY_POLL_MS)
+        }
+    }
+
     /**
      * Prüft, ob der Screensaver gerade läuft und der Modus (Graph/Uhr) noch zum
      * Zeitfenster bzw. der Erzwingen-Entität passt — nötig, weil showScreensaver()
@@ -160,6 +181,8 @@ class MainActivity : AppCompatActivity() {
         voiceResponseText   = findViewById(R.id.voiceResponseText)
         voiceAnimation      = findViewById(R.id.voiceAnimation)
         voiceAnimation.style = prefs.animationStyle
+        doorbellOverlay     = findViewById(R.id.doorbellOverlay)
+        doorbellWebView     = findViewById(R.id.doorbellWebView)
 
         webView.settings.apply {
             javaScriptEnabled = true
@@ -216,6 +239,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        findViewById<Button>(R.id.doorbellClose).setOnClickListener {
+            hideDoorbell()
+        }
+
         findViewById<Button>(R.id.logToggle).setOnClickListener {
             logScroll.visibility =
                 if (logScroll.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -234,6 +261,7 @@ class MainActivity : AppCompatActivity() {
         ui.postDelayed(periodicReload, WEBVIEW_RELOAD_MS)
         ui.post(tickTimer)   // läuft ein Timer noch (auch nach App-Neustart)? → Chip zeigen
         ui.post(pollClockEntity)
+        ui.post(pollDoorbellEntity)
     }
 
     /** Verbleibende Zeit als mm:ss bzw. h:mm:ss (aufgerundet auf Sekunden). */
@@ -247,6 +275,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val WEBVIEW_RELOAD_MS = 6L * 60 * 60 * 1000  // alle 6h Dashboard neu laden
         private const val CLOCK_ENTITY_POLL_MS = 15_000L
+        private const val DOORBELL_ENTITY_POLL_MS = 3_000L
     }
 
     /** Fragt einmalig den Zustand einer HA-Entität per REST ab (Ergebnis kommt im Main-Thread an). */
@@ -614,6 +643,32 @@ class MainActivity : AppCompatActivity() {
         sensorFetcher?.start()
     }
 
+    private fun showDoorbell() {
+        doorbellWasOn = true
+        dismissScreensaver()
+        doorbellWebView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            mediaPlaybackRequiresUserGesture = false
+        }
+        doorbellWebView.webViewClient = WebViewClient()
+        doorbellWebView.loadUrl(prefs.doorbellCameraUrl)
+        doorbellOverlay.alpha = 0f
+        doorbellOverlay.visibility = View.VISIBLE
+        doorbellOverlay.animate().alpha(1f).setDuration(400).start()
+        ui.removeCallbacks(dismissDoorbell)
+        ui.postDelayed(dismissDoorbell, prefs.doorbellAutoDismissSec * 1000L)
+        AppLog.i("Doorbell", "Klingel angezeigt – Auto-Dismiss in ${prefs.doorbellAutoDismissSec}s")
+    }
+
+    private fun hideDoorbell() {
+        ui.removeCallbacks(dismissDoorbell)
+        doorbellOverlay.animate().alpha(0f).setDuration(350).withEndAction {
+            doorbellOverlay.visibility = View.GONE
+            doorbellWebView.loadUrl("about:blank")
+        }.start()
+    }
+
     private fun ensureBatteryOptimizationDisabled() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         if (pm.isIgnoringBatteryOptimizations(packageName)) return
@@ -689,10 +744,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         AppLog.listener = null
-        // Laufende View-Animationen abbrechen, bevor wir die Callbacks nullen.
-        // Sonst kann voiceOverlay.animate().withEndAction{} noch nach onDestroy nachlaufen.
         voiceOverlay.animate().cancel()
-        // Callbacks nullen (schnell, um keine Events von der alten Activity zu bearbeiten)
+        doorbellOverlay.animate().cancel()
         VoiceEvents.onWake = null
         VoiceEvents.onTranscript = null
         VoiceEvents.onResponse = null

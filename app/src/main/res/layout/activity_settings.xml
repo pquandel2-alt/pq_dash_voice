@@ -183,6 +183,60 @@
             android:layout_marginTop="12dp"
             android:text="Gestensteuerung im Brain-Graph (Frontkamera, dreht/zoomt per Handbewegung)" />
 
+        <!-- ── Klingel ── -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp"
+            android:background="#33000000" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Klingel / Türkamera"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="HA-Entität (Trigger)" />
+        <EditText
+            android:id="@+id/doorbellEntity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="input_boolean.klingel_kamera"
+            android:inputType="text"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Kamera-URL (Lovelace-Ansicht mit Kamera-Karte)" />
+        <EditText
+            android:id="@+id/doorbellCameraUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="https://ha.quandel-home.cc/lovelace/klingel"
+            android:inputType="textUri"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Auto-Dismiss nach (Sekunden)" />
+        <EditText
+            android:id="@+id/doorbellAutoDismissSec"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="30"
+            android:inputType="number"
+            android:textSize="12sp" />
+
         <!-- ── Audio ── -->
         <View
             android:layout_width="match_parent"

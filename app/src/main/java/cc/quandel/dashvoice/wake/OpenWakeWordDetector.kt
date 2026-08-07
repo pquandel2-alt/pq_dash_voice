@@ -23,7 +23,7 @@ import java.nio.FloatBuffer
  */
 class OpenWakeWordDetector(
     context: Context,
-    wakeWord: String,
+    val wakeWord: String,
     threshold: Float
 ) : WakeWordDetector {
 

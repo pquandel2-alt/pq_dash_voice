@@ -147,6 +147,21 @@ class Prefs(context: Context) {
         get() = sp.getLong(KEY_TIMER_END, 0L)
         set(v) = sp.edit().putLong(KEY_TIMER_END, v).apply()
 
+    /** HA-Entität für Klingel-Trigger (z. B. input_boolean.klingel_kamera). Leer = deaktiviert. */
+    var doorbellEntity: String
+        get() = sp.getString(KEY_DOORBELL_ENTITY, "") ?: ""
+        set(v) = sp.edit().putString(KEY_DOORBELL_ENTITY, v).apply()
+
+    /** URL der Kamera-Ansicht (z. B. Lovelace mit Kamera-Karte). */
+    var doorbellCameraUrl: String
+        get() = sp.getString(KEY_DOORBELL_URL, "") ?: ""
+        set(v) = sp.edit().putString(KEY_DOORBELL_URL, v).apply()
+
+    /** Auto-Dismiss nach Sekunden (Default: 30). */
+    var doorbellAutoDismissSec: Int
+        get() = sp.getInt(KEY_DOORBELL_DISMISS, 30)
+        set(v) = sp.edit().putInt(KEY_DOORBELL_DISMISS, v).apply()
+
     companion object {
         const val DEFAULT_URL = "https://ha.quandel-home.cc"
         const val DEFAULT_PORT = 10700
@@ -183,5 +198,8 @@ class Prefs(context: Context) {
         private const val KEY_TIMERS = "timers_enabled"
         private const val KEY_FUZZY = "fuzzy_threshold"
         private const val KEY_TIMER_END = "timer_end_at"
+        private const val KEY_DOORBELL_ENTITY = "doorbell_entity"
+        private const val KEY_DOORBELL_URL = "doorbell_url"
+        private const val KEY_DOORBELL_DISMISS = "doorbell_dismiss"
     }
 }

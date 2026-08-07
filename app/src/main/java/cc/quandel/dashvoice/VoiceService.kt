@@ -208,7 +208,19 @@ class VoiceService : Service(), WyomingServer.Listener {
         streamStartedAt = System.currentTimeMillis()
         state = State.RECOGNIZING
         VoiceEvents.voiceState = State.RECOGNIZING
-        handler.post { VoiceEvents.onWake?.invoke() }
+        handler.post {
+            if (VoiceEvents.onWake != null) {
+                VoiceEvents.onWake?.invoke()
+            } else {
+                Log.w(TAG, "onWake null — Activity tot, starte MainActivity neu")
+                try {
+                    startActivity(Intent(this@VoiceService, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Activity-Start fehlgeschlagen: ${e.message}")
+                }
+            }
+        }
     }
 
     @Synchronized
@@ -243,14 +255,49 @@ class VoiceService : Service(), WyomingServer.Listener {
             if (ms != null) { scheduleTimer(ms); return }
         }
 
-        // 2) Lokaler Gerätebefehl (Normalisierung + Fuzzy + Mehrgerät)
+        // 2) Script-Name-Only: Script-Name allein reicht, kein Verb nötig ("Filmabend" statt "starte Filmabend").
+        //    Bidirektionales Scoring verhindert, dass kurze Namen ("Nacht") auf Sätze wie
+        //    "gute nacht" feuern — das asymmetrische score() liefert dort 1.0, min() reduziert auf 0.6.
+        val scriptMap = entities?.scriptIds ?: emptyMap()
+        if (scriptMap.isNotEmpty()) {
+            val t = text.lowercase().trim()
+            val best = scriptMap.entries
+                .mapNotNull { (name, id) ->
+                    val s = CommandParser.scoreBidirectional(t, name)
+                    if (s >= SCRIPT_NAME_MIN_SCORE) Triple(id, name, s) else null
+                }
+                .maxByOrNull { it.third }
+            if (best != null) {
+                Log.i(TAG, "Script-Name-Only: \"$t\" → ${best.second} (${best.first}, score=${"%.2f".format(best.third)})")
+                val res = HaConversation(prefs.dashboardUrl, prefs.haToken).runScript(best.first)
+                if (res != null && res.ok) {
+                    lastTtsEndedAt = System.currentTimeMillis()
+                    bufferedFrames.clear()
+                    state = State.IDLE
+                    VoiceEvents.voiceState = State.IDLE
+                    handler.post { VoiceEvents.onCommandDone?.invoke("") }
+                    maybeStartFollowUp()
+                    return
+                }
+            }
+        }
+
+        // 3) Lokaler Gerätebefehl (Normalisierung + Fuzzy + Mehrgerät)
         val cmds = CommandParser.parse(text, prefs.commandVerbs, entities?.names ?: emptyList(), prefs.fuzzyThreshold)
         if (cmds != null) {
             val conv = HaConversation(prefs.dashboardUrl, prefs.haToken)
             var ok = 0
             for (c in cmds) {
                 Log.i(TAG, "lokaler Befehl: \"$c\"")
-                val res = conv.process(c)
+                // Script-Entitäten direkt per Service-API aufrufen (NLU versteht "starte X" nicht zuverlässig)
+                val scriptId = entities?.scriptIds?.entries
+                    ?.firstOrNull { (name, _) -> c.contains(name) }?.value
+                val res = if (scriptId != null) {
+                    Log.i(TAG, "Script-Direktaufruf: $scriptId")
+                    conv.runScript(scriptId)
+                } else {
+                    conv.process(c)
+                }
                 if (res != null && res.ok) ok++
             }
             if (ok > 0) {
@@ -359,7 +406,19 @@ class VoiceService : Service(), WyomingServer.Listener {
         streamStartedAt = System.currentTimeMillis()
         state = State.STREAMING
         VoiceEvents.voiceState = State.STREAMING
-        handler.post { VoiceEvents.onWake?.invoke() }
+        handler.post {
+            if (VoiceEvents.onWake != null) {
+                VoiceEvents.onWake?.invoke()
+            } else {
+                Log.w(TAG, "onWake null — Activity tot, starte MainActivity neu")
+                try {
+                    startActivity(Intent(this@VoiceService, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Activity-Start fehlgeschlagen: ${e.message}")
+                }
+            }
+        }
     }
 
     @Synchronized
@@ -567,6 +626,18 @@ class VoiceService : Service(), WyomingServer.Listener {
      * gebunden und braucht einen kurzen Capture-Neuaufbau, daher nur bei tatsächlicher Änderung.
      */
     private fun applySettings() {
+        // Wake-Word live austauschen wenn geändert (neues Modell laden, altes schließen)
+        val newWake = prefs.wakeWord
+        if (newWake != (wake as? OpenWakeWordDetector)?.wakeWord) {
+            wake.close()
+            wake = try {
+                val d = OpenWakeWordDetector(this, newWake, prefs.wakeThreshold)
+                if (d.available) d else NoopWakeWordDetector()
+            } catch (e: Exception) {
+                Log.w(TAG, "wake reload failed: ${e.message}"); NoopWakeWordDetector()
+            }
+            Log.i(TAG, "Wake-Word neu geladen: $newWake (${if (wake.available) "ok" else "nicht verfügbar"})")
+        }
         (wake as? OpenWakeWordDetector)?.threshold = prefs.wakeThreshold
         capture.gain = prefs.micGain
         if (prefs.noiseSuppressionEnabled != captureNoiseSuppression) {
@@ -594,6 +665,9 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val FOLLOW_UP_DELAY_MS = 700L         // kurze Pause vor Follow-up-Zuhören (Echo abklingen)
         private const val FOLLOW_UP_NO_SPEECH_MS = 5000L    // Follow-up bricht ab, wenn nichts gesagt wird
         private const val TIMER_AUTOSTOP_MS = 120_000L      // Wecker stoppt spätestens nach 2 min
+        // Bidirektionaler Score-Mindest-Wert für Script-Name-Only-Erkennung (strenger als fuzzyThreshold,
+        // da kein Verb als Kontext vorhanden; verhindert Fehlauslösung durch Alltagssätze wie "gute nacht")
+        private const val SCRIPT_NAME_MIN_SCORE = 0.70f
         const val ACTION_TALK = "cc.quandel.dashvoice.TALK"
         const val ACTION_TIMER_STOP = "cc.quandel.dashvoice.TIMER_STOP"
         const val ACTION_APPLY_SETTINGS = "cc.quandel.dashvoice.APPLY_SETTINGS"

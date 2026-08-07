@@ -52,5 +52,30 @@ class HaConversation(private val haUrl: String, private val token: String) {
         }
     }
 
+    /** Ruft ein HA-Script direkt per Service-API auf — umgeht die NLU-Pipeline. Gibt sofort zurück. */
+    fun runScript(entityId: String): Result? {
+        if (token.isBlank()) return null
+        return try {
+            val base = haUrl.trimEnd('/')
+            val conn = URL("$base/api/services/script/turn_on").openConnection() as HttpsURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Authorization", "Bearer $token")
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 4000
+            conn.readTimeout = 5000
+            conn.doOutput = true
+            conn.outputStream.use {
+                it.write(JSONObject().put("entity_id", entityId).toString().toByteArray(Charsets.UTF_8))
+            }
+            val code = conn.responseCode
+            conn.disconnect()
+            Log.i(TAG, "runScript $entityId → HTTP $code")
+            if (code in 200..299) Result("action_done", "") else null
+        } catch (e: Exception) {
+            Log.w(TAG, "runScript: ${e.message}")
+            null
+        }
+    }
+
     companion object { private const val TAG = "HaConv" }
 }
