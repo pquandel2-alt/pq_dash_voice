@@ -177,7 +177,7 @@ void main() {
         size *= glowScale;
         float glowAlpha = 0.055;
         if (vRegion == 0.0 || vRegion == 3.0 || vRegion == 4.0) glowAlpha = 0.095;
-        if (vRegion == 7.0 || vRegion == 8.0) glowAlpha = 0.085;
+        if (vRegion == 7.0 || vRegion == 8.0) glowAlpha = 0.060;
         if (vRegion == 9.0) glowAlpha = 0.040;
         alpha *= glowAlpha;
     }
@@ -271,6 +271,7 @@ class ParticleScene {
         this.particleSystem = null;
         this.glowSystem = null;
         this.layout = null; // anatomical constants from computeLayout()
+        this.referenceImage = null;
 
         this.config = {
             quality: 'AUTO',
@@ -303,6 +304,20 @@ class ParticleScene {
         this.config.debug = opts.debug === true;
         this.log(`Particle quality: ${quality} (${this.config.particleCount} particles), ` +
             `speed=${this.config.animationSpeedMultiplier}x, assembly=${this.config.assemblyEnabled}`);
+    }
+
+    setReferenceImage(imageElement) {
+        this.referenceImage = imageElement;
+    }
+
+    syncReferenceVisual() {
+        if (!this.referenceImage) return;
+        const assembled = this.currentState !== 'ASSEMBLING';
+        this.referenceImage.style.opacity = assembled ? '1' : '0';
+        this.canvas.style.opacity = assembled ? '0' : '1';
+        // The exact reference already contains its own bloom. Rendering the duplicate
+        // glow draw-call during assembly only doubles GPU load without improving fidelity.
+        if (this.glowSystem) this.glowSystem.visible = false;
     }
 
     /** Grobe Geräte-Heuristik für AUTO-Qualität: CPU-Kerne + effektive Pixelzahl. */
@@ -375,10 +390,13 @@ class ParticleScene {
             this.positions.set(this.targetPositions);
             if (this.particleGeometry) this.particleGeometry.attributes.position.needsUpdate = true;
             this.currentState = 'IDLE';
+            this.syncReferenceVisual();
             this.log('Assembly completed (instant, animation disabled)');
             window.particleInterface?.setState('IDLE');
             return;
         }
+
+        this.syncReferenceVisual();
 
         switch (stateName) {
             case 'SUCCESS':
@@ -437,7 +455,7 @@ class ParticleScene {
             chestHalfDepth: 55 * s,
             chestCoreY: -5 * s,
             chestCoreZ: 48 * s,
-            faceCoreY: headCenterY - headHalfHeight * 0.08,
+            faceCoreY: headCenterY - headHalfHeight * 0.20,
             faceCoreZ: 53 * s,
         };
     }
@@ -461,6 +479,12 @@ class ParticleScene {
     generateTargetGeometry() {
         const L = this.layout;
         const budget = this.config.particleCount;
+
+        if (this.referenceImage?.complete && this.referenceImage.naturalWidth > 0) {
+            this.targetPoints = this.generateReferenceParticles(budget, L);
+            return;
+        }
+
         const pts = [];
 
         const faceCoreBudget = Math.round(budget * 0.075);
@@ -492,6 +516,60 @@ class ParticleScene {
             pts.push({ ...src, x: src.x + (Math.random() - 0.5) * 3, y: src.y + (Math.random() - 0.5) * 3, z: src.z + (Math.random() - 0.5) * 3 });
         }
         this.targetPoints = pts.slice(0, budget);
+    }
+
+    /**
+     * Samples the supplied artwork itself, so assembly particles converge on the exact
+     * silhouette and palette instead of on a hand-authored anatomical approximation.
+     */
+    generateReferenceParticles(budget, L) {
+        const sampleCanvas = document.createElement('canvas');
+        sampleCanvas.width = 360;
+        sampleCanvas.height = 640;
+        const ctx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(this.referenceImage, 0, 0, sampleCanvas.width, sampleCanvas.height);
+        const pixels = ctx.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height).data;
+        const candidates = [];
+
+        for (let y = 0; y < sampleCanvas.height; y++) {
+            for (let x = 0; x < sampleCanvas.width; x++) {
+                const offset = (y * sampleCanvas.width + x) * 4;
+                const r = pixels[offset], g = pixels[offset + 1], b = pixels[offset + 2];
+                const peak = Math.max(r, g, b);
+                const chroma = peak - Math.min(r, g, b);
+                // Reject the JPEG-black background but retain the dim blue particle haze.
+                if (peak >= 18 && (chroma >= 8 || peak >= 70)) candidates.push({ x, y, r, g, b, peak });
+            }
+        }
+
+        const worldHeight = (L.headTopY - L.chestBottomY) * 1.18;
+        const centerY = (L.headTopY + L.chestBottomY) * 0.5;
+        const worldWidth = worldHeight * (this.referenceImage.naturalWidth / this.referenceImage.naturalHeight) * 1.48;
+        const pts = [];
+        const goldenStep = 0.6180339887498949;
+
+        for (let i = 0; i < budget; i++) {
+            const candidateIndex = Math.floor(((i * goldenStep) % 1) * candidates.length);
+            const p = candidates[candidateIndex];
+            const u = p.x / (sampleCanvas.width - 1);
+            const v = p.y / (sampleCanvas.height - 1);
+            const intensity = p.peak / 255;
+            const warm = p.r > p.b * 1.18 && p.r > p.g * 1.04;
+            const region = warm
+                ? REGION.FACE_CORE
+                : (intensity < 0.20 ? REGION.AMBIENT : (v < 0.57 ? REGION.HEAD : REGION.CHEST));
+
+            pts.push({
+                x: (u - 0.5) * worldWidth,
+                y: centerY + (0.5 - v) * worldHeight,
+                z: (24 + intensity * 30 + (Math.random() - 0.5) * 4) * L.s,
+                region,
+                color: new THREE.Color(p.r / 255, p.g / 255, p.b / 255),
+                size: (1.15 + intensity * 1.9) * L.s,
+                pathT: v,
+            });
+        }
+        return pts;
     }
 
     genHeadSurface(pts, budget, L) {
@@ -544,10 +622,10 @@ class ParticleScene {
     /** Large warm energy field made from horizontal contour strands; no facial features. */
     genFaceCore(pts, budget, L) {
         const rings = 34;
-        const lineBudget = Math.round(budget * 0.68);
+        const lineBudget = Math.round(budget * 0.82);
         const perRing = Math.max(12, Math.floor(lineBudget / rings));
-        const halfH = 35 * L.s;
-        const halfW = 35 * L.s;
+        const halfH = 34 * L.s;
+        const halfW = 37 * L.s;
         for (let row = 0; row < rings; row++) {
             const h = 1 - (row / (rings - 1)) * 2;
             const rowWidth = halfW * Math.sqrt(Math.max(0, 1 - h * h));
@@ -574,7 +652,9 @@ class ParticleScene {
             28 * L.s, 30 * L.s, 5 * L.s,
             colorFaceCore, 2.2 * L.s
         );
-        for (const size of [40, 26]) {
+        // A restrained central spark keeps the core orange instead of turning into a
+        // white lamp on lower-density/mobile displays.
+        for (const size of [24, 15]) {
             pts.push({
                 x: 0,
                 y: L.faceCoreY,
@@ -668,27 +748,27 @@ class ParticleScene {
     }
 
     genNeck(pts, budget, L) {
-        const strands = 16;
+        const strands = 18;
         const perStrand = Math.max(8, Math.round(budget / strands));
         for (let strand = 0; strand < strands; strand++) {
             const xNorm = (strand / (strands - 1)) * 2 - 1;
             const absX = Math.abs(xNorm);
             const curve = new THREE.CatmullRomCurve3([
-                new THREE.Vector3(xNorm * 14 * L.s, L.neckTopY + 3 * L.s, 42 * L.s),
-                new THREE.Vector3(xNorm * (16 + absX * 5) * L.s, L.neckTopY - 35 * L.s, 38 * L.s),
-                new THREE.Vector3(xNorm * (22 + absX * 8) * L.s, L.neckBottomY + 13 * L.s, 43 * L.s),
-                new THREE.Vector3(xNorm * (34 + absX * 8) * L.s, L.neckBottomY, 44 * L.s),
+                new THREE.Vector3(xNorm * 13 * L.s, L.neckTopY + 3 * L.s, 42 * L.s),
+                new THREE.Vector3(xNorm * (11 + absX * 4) * L.s, L.neckTopY - 29 * L.s, 40 * L.s),
+                new THREE.Vector3(xNorm * (16 + absX * 7) * L.s, L.neckBottomY + 18 * L.s, 43 * L.s),
+                new THREE.Vector3(xNorm * (30 + absX * 8) * L.s, L.neckBottomY, 44 * L.s),
             ]);
             const sampled = curve.getSpacedPoints(perStrand - 1);
             sampled.forEach((p, i) => {
-                const warm = absX < 0.26;
+                const warm = absX < 0.34;
                 pts.push({
                     x: p.x + Math.sin(i * 0.24 + xNorm * 2) * 0.8 * L.s,
                     y: p.y + Math.sin(strand * 1.71 + i * 0.31) * 1.1 * L.s,
                     z: p.z,
                     region: REGION.NECK,
                     color: warm ? colorNeckEnergy() : colorCyanStructure(),
-                    size: (warm ? 1.45 : 1.85) * L.s,
+                    size: (warm ? 1.35 : 1.95) * L.s,
                     pathT: i / (perStrand - 1),
                 });
             });
@@ -697,17 +777,17 @@ class ParticleScene {
 
     genShoulder(pts, budget, L, side) {
         const region = side < 0 ? REGION.SHOULDER_L : REGION.SHOULDER_R;
-        const layers = 7;
+        const layers = 5;
         const perLayer = Math.max(12, Math.round(budget / layers));
         for (let layer = 0; layer < layers; layer++) {
             const depth = layer / (layers - 1);
-            const offset = (depth - 0.5) * 8 * L.s;
+            const offset = (depth - 0.5) * 5 * L.s;
             const curve = new THREE.CatmullRomCurve3([
                 new THREE.Vector3(side * 18 * L.s, L.headBottomY - 9 * L.s + offset, 38 * L.s),
-                new THREE.Vector3(side * 34 * L.s, L.neckTopY - 35 * L.s + offset, 42 * L.s),
-                new THREE.Vector3(side * 82 * L.s, L.shoulderCenterY + 26 * L.s + offset, 36 * L.s),
-                new THREE.Vector3(side * 145 * L.s, L.shoulderCenterY + 11 * L.s + offset, 22 * L.s),
-                new THREE.Vector3(side * L.shoulderReachX, L.shoulderCenterY - 12 * L.s + offset * 0.35, 7 * L.s),
+                new THREE.Vector3(side * 31 * L.s, L.neckTopY - 37 * L.s + offset, 42 * L.s),
+                new THREE.Vector3(side * 76 * L.s, L.shoulderCenterY + 24 * L.s + offset, 36 * L.s),
+                new THREE.Vector3(side * 141 * L.s, L.shoulderCenterY + 3 * L.s + offset, 22 * L.s),
+                new THREE.Vector3(side * L.shoulderReachX, L.shoulderCenterY - 38 * L.s + offset * 0.25, 7 * L.s),
             ]);
             const sampled = curve.getSpacedPoints(perLayer - 1);
             sampled.forEach((p, i) => {
@@ -717,7 +797,7 @@ class ParticleScene {
                     z: p.z,
                     region,
                     color: colorCyanStructure(),
-                    size: (layer === 0 || layer === layers - 1 ? 2.7 : 1.8) * L.s,
+                    size: (layer === 0 || layer === layers - 1 ? 2.8 : 1.9) * L.s,
                     pathT: i / (perLayer - 1),
                 });
             });
@@ -725,16 +805,17 @@ class ParticleScene {
     }
 
     genChest(pts, budget, L) {
-        const fansPerSide = 23;
+        const fansPerSide = 25;
         const perFan = Math.max(12, Math.floor(budget / (fansPerSide * 2)));
         for (const side of [-1, 1]) {
             for (let lane = 0; lane < fansPerSide; lane++) {
                 const n = lane / (fansPerSide - 1);
                 const curve = new THREE.CatmullRomCurve3([
-                    new THREE.Vector3(side * (1 + n * 58) * L.s, L.chestBottomY, 18 * L.s),
-                    new THREE.Vector3(side * (2 + n * 44) * L.s, L.chestCoreY - 38 * L.s, 35 * L.s),
-                    new THREE.Vector3(side * (10 + n * 32) * L.s, L.chestCoreY - 2 * L.s, 47 * L.s),
-                    new THREE.Vector3(side * (62 + n * 112) * L.s, L.shoulderCenterY - (2 + n * 22) * L.s, 24 * L.s),
+                    new THREE.Vector3(side * (3 + n * 78) * L.s, L.chestBottomY + n * 43 * L.s, 18 * L.s),
+                    new THREE.Vector3(side * (4 + n * 67) * L.s, L.chestCoreY - 49 * L.s, 32 * L.s),
+                    new THREE.Vector3(side * (9 + n * 53) * L.s, L.chestCoreY - 8 * L.s, 48 * L.s),
+                    new THREE.Vector3(side * (40 + n * 78) * L.s, L.shoulderCenterY + (8 + n * 10) * L.s, 38 * L.s),
+                    new THREE.Vector3(side * (76 + n * 103) * L.s, L.shoulderCenterY - (8 + n * 36) * L.s, 20 * L.s),
                 ]);
                 const phase = (lane * 0.37) % 1;
                 const sampled = [];
@@ -747,7 +828,7 @@ class ParticleScene {
                     z: p.z,
                     region: REGION.CHEST,
                     color: colorFlow(),
-                    size: (1.90 + (1 - n) * 0.45) * L.s,
+                    size: (1.85 + (1 - n) * 0.42) * L.s,
                     pathT: i / (perFan - 1),
                 }));
             }
@@ -785,15 +866,16 @@ class ParticleScene {
                 ], color: lane < 2 ? colorNeckEnergy : colorFlow, size: lane < 2 ? 2.1 : 1.9 });
             }
 
-            // Cyan shoulder streams radiate from the chest light and reinforce the silhouette.
-            for (let lane = 0; lane < 8; lane++) {
-                const n = lane / 7;
+            // A few nested chest streams merge with the fan instead of forming a
+            // detached second shoulder wing.
+            for (let lane = 0; lane < 5; lane++) {
+                const n = lane / 4;
                 pathSpecs.push({ points: [
-                    [side * (3 + lane * 2) * s, L.chestCoreY, L.chestCoreZ + 2 * s],
-                    [side * (32 + lane * 5) * s, L.chestCoreY + (18 + lane * 2) * s, 45 * s],
-                    [side * (90 + lane * 8) * s, L.shoulderCenterY + (10 - lane * 2) * s, 31 * s],
-                    [side * (155 + n * 30) * s, L.shoulderCenterY - (8 + lane * 3) * s, 12 * s],
-                ], color: colorFlow, size: lane === 0 ? 2.5 : 1.8 });
+                    [side * (3 + lane) * s, L.chestCoreY, L.chestCoreZ + 2 * s],
+                    [side * (8 + lane * 3) * s, L.chestCoreY + (12 + lane * 2) * s, 47 * s],
+                    [side * (42 + lane * 12) * s, L.shoulderCenterY + (17 - lane) * s, 39 * s],
+                    [side * (105 + n * 68) * s, L.shoulderCenterY - (4 + lane * 5) * s, 16 * s],
+                ], color: colorFlow, size: lane === 0 ? 2.35 : 1.75 });
             }
         }
 
@@ -1095,6 +1177,7 @@ class ParticleScene {
             this.assemblyCompleteLogged = true;
             this.log('Assembly completed');
             this.currentState = 'IDLE';
+            this.syncReferenceVisual();
             window.particleInterface?.setState('IDLE');
         }
     }
