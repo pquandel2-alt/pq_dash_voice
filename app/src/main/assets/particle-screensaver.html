@@ -8,13 +8,7 @@
         * { margin: 0; padding: 0; }
         html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
         #referenceVisual {
-            position: fixed; inset: 0;
-            width: 100%; height: 100%;
-            object-fit: contain;
-            z-index: 2;
-            opacity: 0;
-            transition: opacity 420ms ease;
-            pointer-events: none;
+            display: none;
         }
         #canvas {
             position: relative; z-index: 1;
@@ -24,7 +18,7 @@
         #debugInfo {
             position: absolute; top: 10px; left: 10px;
             color: #0f0; font-family: monospace; font-size: 12px;
-            opacity: 0.5; pointer-events: none; z-index: 3;
+            opacity: 0.5; pointer-events: none; z-index: 2;
         }
         .assistantText {
             position: absolute;
@@ -38,7 +32,7 @@
             line-height: 1.4;
             text-shadow: 0 0 8px rgba(127, 217, 255, 0.8);
             pointer-events: none;
-            display: none; z-index: 3;
+            display: none; z-index: 2;
         }
         #transcriptOverlay { bottom: 20%; opacity: 0.8; font-size: 17px; }
         #responseOverlay { bottom: 11%; }

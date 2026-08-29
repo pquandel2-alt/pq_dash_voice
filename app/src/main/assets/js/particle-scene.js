@@ -286,6 +286,7 @@ class ParticleScene {
 
         this.perfHistory = [];
         this.perfLastTime = performance.now();
+        this.lastUpdateTime = performance.now();
         this.autoDowngraded = false;
         this.lastFrameTime = performance.now();
 
@@ -311,19 +312,11 @@ class ParticleScene {
     }
 
     syncReferenceVisual() {
-        if (!this.referenceImage?.complete || this.referenceImage.naturalWidth <= 0) {
-            // Never hide the WebGL fallback when the asset failed to load in Android WebView.
-            this.canvas.style.opacity = '1';
-            return;
-        }
-        const assembled = this.currentState !== 'ASSEMBLING';
-        this.referenceImage.style.opacity = assembled ? '1' : '0';
-        // Keep WebGL visible as a fallback underneath the opaque reference. Android WebView
-        // may retain an opaque hardware canvas even when CSS opacity is set to zero.
+        // The reference image is input data only. The visible result always stays WebGL,
+        // so it remains animated and cannot disappear when WebView evicts an image layer.
+        if (this.referenceImage) this.referenceImage.style.display = 'none';
         this.canvas.style.opacity = '1';
-        // The exact reference already contains its own bloom. Rendering the duplicate
-        // glow draw-call during assembly only doubles GPU load without improving fidelity.
-        if (this.glowSystem) this.glowSystem.visible = false;
+        if (this.glowSystem) this.glowSystem.visible = true;
     }
 
     /** Grobe Geräte-Heuristik für AUTO-Qualität: CPU-Kerne + effektive Pixelzahl. */
@@ -345,6 +338,7 @@ class ParticleScene {
         this.frameCamera();
         this.generateTargetGeometry();
         this.initializeParticles();
+        this.lastUpdateTime = performance.now();
         this.animate();
     }
 
@@ -356,6 +350,8 @@ class ParticleScene {
     resume() {
         if (!this.isRunning) return;
         this.isPaused = false;
+        // Do not count time spent paused as animation time.
+        this.lastUpdateTime = performance.now();
         this.log('ParticleScene resumed');
         this.animate();
     }
@@ -956,7 +952,7 @@ class ParticleScene {
 
     // ──────── Private: Initialization ────────
 
-    initializeParticles() {
+    initializeParticles(settled = false) {
         if (this.particleSystem) {
             this.scene.remove(this.particleSystem);
             this.particleSystem.geometry.dispose();
@@ -1000,6 +996,13 @@ class ParticleScene {
             colors[idx + 1] = p.color.g;
             colors[idx + 2] = p.color.b;
             sizes[i] = p.size;
+        }
+
+        if (settled) {
+            // A performance-tier rebuild happens while the figure is already visible.
+            // Start at the new targets instead of scattering everything back into darkness.
+            this.positions.set(this.targetPositions);
+            this.startPositions.set(this.targetPositions);
         }
 
         const geometry = new THREE.BufferGeometry();
@@ -1098,8 +1101,13 @@ class ParticleScene {
     }
 
     update() {
-        const dt = 0.016 * this.config.animationSpeedMultiplier;
-        this.elapsedTime += dt * 1000;
+        const now = performance.now();
+        const wallDt = Math.max(0, (now - this.lastUpdateTime) / 1000);
+        this.lastUpdateTime = now;
+        // Assembly timing follows real time, while physics remains capped after a stalled frame.
+        const speed = this.config.animationSpeedMultiplier;
+        const dt = Math.min(0.05, wallDt) * speed;
+        this.elapsedTime += wallDt * speed * 1000;
         this.frameCount++;
 
         this.updateEnvelopes(dt);
@@ -1309,7 +1317,7 @@ class ParticleScene {
             this.log(`Low FPS (${avgFps.toFixed(1)}) → reducing particle count ${this.config.particleCount} → ${newCount}`);
             this.config.particleCount = newCount;
             this.generateTargetGeometry();
-            this.initializeParticles();
+            this.initializeParticles(true);
         }
     }
 
