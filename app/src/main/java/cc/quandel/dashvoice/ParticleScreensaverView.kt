@@ -78,6 +78,11 @@ class ParticleScreensaverView @JvmOverloads constructor(
     }
 
     fun setParticleState(state: ParticleState) {
+        // The always-streaming satellite can emit IDLE while the entrance animation is still
+        // running. Do not let that event snap all particles straight to the finished portrait.
+        if (state == ParticleState.IDLE && currentState == ParticleState.ASSEMBLING &&
+            System.currentTimeMillis() - assemblyStartedAt < ASSEMBLY_DURATION_MS
+        ) return
         currentState = state
         if (state == ParticleState.ASSEMBLING) resetAssembly()
         if (running) postInvalidateOnAnimation()
@@ -164,7 +169,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
                 color = candidate.color,
                 brightness = brightness,
                 phase = random.nextFloat() * (PI * 2).toFloat(),
-                drift = 0.45f + random.nextFloat() * 1.35f,
+                drift = 1.8f + random.nextFloat() * 3.8f,
                 radius = 0.7f + brightness * 1.65f + random.nextFloat() * 0.45f,
             )
             cursor += stride
@@ -187,7 +192,8 @@ class ParticleScreensaverView @JvmOverloads constructor(
 
         var assembly = 1f
         if (currentState == ParticleState.ASSEMBLING && assemblyEnabled) {
-            val raw = ((now - assemblyStartedAt) / (3_200f / animationSpeed)).coerceIn(0f, 1f)
+            val raw = ((now - assemblyStartedAt) /
+                (ASSEMBLY_DURATION_MS / animationSpeed)).coerceIn(0f, 1f)
             assembly = if (raw < 0.5f) {
                 4f * raw * raw * raw
             } else {
@@ -198,30 +204,69 @@ class ParticleScreensaverView @JvmOverloads constructor(
 
         val centerX = width * 0.5f
         val centerY = height * 0.5f
-        val breathe = 1f + sin(seconds * 1.15f) * 0.009f
+        // Whole-body breathing and a tiny head-led sway make the silhouette feel inhabited.
+        val breatheX = 1f + sin(seconds * 1.05f) * 0.014f
+        val breatheY = 1f + sin(seconds * 1.05f + 0.35f) * 0.010f
+        val bodySway = sin(seconds * 0.58f) * width * 0.0045f
         val speaking = if (currentState == ParticleState.SPEAKING) audioLevel else 0f
 
         for (particle in particles) {
-            val targetX = centerX + (particle.targetX - centerX) * breathe
-            val targetY = centerY + (particle.targetY - centerY) * breathe
+            val normalizedY = (particle.targetY / height).coerceIn(0f, 1f)
+            val upperBodyInfluence = (1.15f - normalizedY).coerceIn(0.25f, 1f)
+            var targetX = centerX + (particle.targetX - centerX) * breatheX +
+                bodySway * upperBodyInfluence
+            var targetY = centerY + (particle.targetY - centerY) * breatheY
+
+            // The warm face core expands and contracts independently, like a slow heartbeat.
+            val red = Color.red(particle.color)
+            val green = Color.green(particle.color)
+            val blue = Color.blue(particle.color)
+            val warmCore = red > blue * 1.18f && red > green * 0.90f
+            if (warmCore) {
+                val faceCenterY = height * 0.38f
+                val corePulse = 1f + sin(seconds * 2.35f) * 0.032f
+                targetX = centerX + (targetX - centerX) * corePulse
+                targetY = faceCenterY + (targetY - faceCenterY) * corePulse
+            }
             val x: Float
             val y: Float
             if (assembly < 1f) {
-                x = particle.startX + (targetX - particle.startX) * assembly
-                y = particle.startY + (targetY - particle.startY) * assembly
+                // A curved stream is visibly different from a flat cross-fade into the image.
+                val stream = sin(particle.phase + assembly * PI.toFloat() * 3f) *
+                    (1f - assembly) * width * 0.055f
+                x = particle.startX + (targetX - particle.startX) * assembly + stream
+                y = particle.startY + (targetY - particle.startY) * assembly -
+                    cos(particle.phase + assembly * PI.toFloat() * 2f) *
+                    (1f - assembly) * height * 0.035f
             } else {
-                x = targetX + sin(seconds * (0.65f + particle.drift * 0.16f) + particle.phase) * particle.drift
-                y = targetY + cos(seconds * (0.55f + particle.drift * 0.13f) + particle.phase) * particle.drift
+                // Every particle has its own orbit. A small rolling subset detaches farther from
+                // the body and returns, so motion stays obvious without destroying the silhouette.
+                val orbitX = sin(seconds * (0.72f + particle.drift * 0.055f) + particle.phase) * particle.drift
+                val orbitY = cos(seconds * (0.61f + particle.drift * 0.047f) + particle.phase) * particle.drift
+                val energyWave = sin(seconds * 2.2f - normalizedY * 15f + particle.phase * 0.16f) * 1.8f
+                val cycle = (seconds * 0.105f + particle.phase / (PI.toFloat() * 2f)) % 1f
+                val release = if (cycle < 0.11f) sin(cycle / 0.11f * PI.toFloat()) else 0f
+                val releaseX = sin(particle.phase + seconds * 0.85f) * release * (8f + particle.drift * 2.2f)
+                val releaseY = -release * (7f + particle.drift * 2.8f)
+                x = targetX + orbitX + releaseX + energyWave * 0.45f
+                y = targetY + orbitY + releaseY + energyWave
             }
-            val pulse = 0.86f + 0.14f * sin(seconds * 2.1f + particle.phase) + speaking * 0.28f
+            val pulse = 0.68f + 0.32f * sin(seconds * 2.4f + particle.phase) + speaking * 0.28f
             val alpha = (255f * (particle.brightness * pulse + 0.18f).coerceIn(0.32f, 1f)).toInt()
             particlePaint.color = Color.argb(
                 alpha,
-                Color.red(particle.color),
-                Color.green(particle.color),
-                Color.blue(particle.color),
+                red,
+                green,
+                blue,
             )
-            canvas.drawCircle(x, y, particle.radius * (1f + speaking * 0.22f), particlePaint)
+            val twinkleSize = 0.78f + 0.32f *
+                ((sin(seconds * 2.7f + particle.phase) + 1f) * 0.5f)
+            canvas.drawCircle(
+                x,
+                y,
+                particle.radius * twinkleSize * (1f + speaking * 0.22f),
+                particlePaint,
+            )
         }
         postInvalidateDelayed(33L)
     }
@@ -260,5 +305,9 @@ class ParticleScreensaverView @JvmOverloads constructor(
             false,
             fallbackPaint,
         )
+    }
+
+    companion object {
+        private const val ASSEMBLY_DURATION_MS = 3_200f
     }
 }
