@@ -1,17 +1,208 @@
 /**
- * ParticleScene: WebGL-rendered 3D particle system forming a futuristic AI head.
+ * ParticleScene: WebGL-rendered 3D particle system forming an abstract holographic
+ * humanoid AI bust (head + neck + shoulders + upper chest).
  *
- * States:
- * - IDLE: subtle pulsing, breathing motion
- * - ASSEMBLING: particles build up from chaos into form
- * - LISTENING: reactive to microphone input
- * - THINKING: processing animation (brain area)
- * - SPEAKING: mouth region follows TTS audio level
- * - SUCCESS: positive energy burst, then IDLE
- * - ERROR: warning animation
+ * Architecture (see REGION below):
+ * - HEAD / FACE / NECK / SHOULDER_L / SHOULDER_R / CHEST  → structural silhouette
+ * - FLOW                                                  → glowing energy lines across
+ *                                                            forehead→temple→cheek→neck and
+ *                                                            chest→shoulders, rendered as
+ *                                                            densely-sampled point chains
+ * - FACE_CORE / CHEST_CORE                                → soft volumetric energy clusters
+ * - AMBIENT                                                → free-floating particles around
+ *                                                            the figure
  *
- * Performance: targets 60fps with adaptive particle count (see configure()).
+ * All regions share ONE THREE.Points draw call with a custom ShaderMaterial (radial-falloff
+ * "glow dot" fragment shader, additive blending). Per-particle region/path/seed data is
+ * static (uploaded once); only the position buffer and a handful of uniforms change per
+ * frame, which keeps this cheap enough for the target device (Huawei MatePad DBY-W09) even
+ * at 18k particles — no per-particle object allocation happens in the render loop.
+ *
+ * States: IDLE, ASSEMBLING, LISTENING, THINKING, SPEAKING, SUCCESS, ERROR
+ * (state machine contract unchanged — see setState()/setAudioLevel() and
+ * ParticleSceneInterface.kt / ParticleAssistantController.kt on the Kotlin side).
  */
+
+const REGION = {
+    HEAD: 0,
+    FACE: 1,
+    NECK: 2,
+    SHOULDER_L: 3,
+    SHOULDER_R: 4,
+    CHEST: 5,
+    FLOW: 6,
+    FACE_CORE: 7,
+    CHEST_CORE: 8,
+    AMBIENT: 9,
+};
+
+// Assembly is hierarchical: each region starts/finishes moving into place within its own
+// window (fraction of the total assembly duration), so the figure builds up in stages
+// (ambient haze → rough silhouette → face/neck detail → energy lines → glowing cores)
+// instead of every particle moving in lockstep.
+const REGION_WINDOW = {
+    [REGION.AMBIENT]: [0.00, 0.32],
+    [REGION.HEAD]: [0.08, 0.55],
+    [REGION.SHOULDER_L]: [0.10, 0.55],
+    [REGION.SHOULDER_R]: [0.10, 0.55],
+    [REGION.CHEST]: [0.12, 0.58],
+    [REGION.NECK]: [0.40, 0.75],
+    [REGION.FACE]: [0.42, 0.78],
+    [REGION.FLOW]: [0.55, 0.88],
+    [REGION.FACE_CORE]: [0.78, 1.00],
+    [REGION.CHEST_CORE]: [0.80, 1.00],
+};
+
+// Head profile: half-width (x) / half-depth (z) as a fraction of the maximum, keyed by
+// normalized height h (1 = crown, -1 = chin). This is what replaces the old constant-radius
+// sphere — width/depth now genuinely depend on height, giving a skull → temple → cheekbone →
+// jaw → chin taper instead of a ball.
+const HEAD_PROFILE = [
+    { h: 1.00, rx: 0.10, rz: 0.18 }, // rounded crown
+    { h: 0.82, rx: 0.62, rz: 0.62 },
+    { h: 0.48, rx: 0.92, rz: 0.88 }, // forehead
+    { h: 0.05, rx: 1.00, rz: 1.00 }, // widest face band
+    { h: -0.40, rx: 0.86, rz: 0.82 },
+    { h: -0.76, rx: 0.54, rz: 0.56 }, // jaw
+    { h: -1.00, rx: 0.12, rz: 0.22 }, // rounded chin
+];
+
+function headProfileAt(h) {
+    if (h >= HEAD_PROFILE[0].h) return HEAD_PROFILE[0];
+    const last = HEAD_PROFILE[HEAD_PROFILE.length - 1];
+    if (h <= last.h) return last;
+    for (let k = 0; k < HEAD_PROFILE.length - 1; k++) {
+        const a = HEAD_PROFILE[k], b = HEAD_PROFILE[k + 1];
+        if (h <= a.h && h >= b.h) {
+            const t = (a.h - h) / (a.h - b.h);
+            return { rx: a.rx + (b.rx - a.rx) * t, rz: a.rz + (b.rz - a.rz) * t };
+        }
+    }
+    return last;
+}
+
+function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// ──────── Color palette ────────
+// Outer structure/flow: cyan / electric blue, shifting toward white-cyan for high-energy
+// flow lines. Face core: warm amber/orange. Chest core: cyan-white. Ambient: darker blue-cyan.
+function colorCyanStructure() {
+    const c = new THREE.Color();
+    c.setHSL(0.54 + (Math.random() - 0.5) * 0.05, 0.70 + Math.random() * 0.18, 0.50 + Math.random() * 0.14);
+    return c;
+}
+function colorFlow() {
+    const c = new THREE.Color();
+    c.setHSL(0.52 + (Math.random() - 0.5) * 0.04, 0.45 + Math.random() * 0.2, 0.68 + Math.random() * 0.18);
+    return c;
+}
+function colorFaceCore(intensity = Math.random()) {
+    const c = new THREE.Color();
+    c.setHSL(0.065 + intensity * 0.035, 0.96 - intensity * 0.10, 0.43 + intensity * 0.23);
+    return c;
+}
+function colorNeckEnergy() {
+    const c = new THREE.Color();
+    c.setHSL(0.09 + Math.random() * 0.04, 0.68 + Math.random() * 0.2, 0.52 + Math.random() * 0.18);
+    return c;
+}
+function colorChestCore() {
+    const c = new THREE.Color();
+    const white = Math.random() < 0.4;
+    c.setHSL(white ? 0.55 : 0.51, white ? 0.15 : 0.5, white ? 0.82 + Math.random() * 0.12 : 0.6 + Math.random() * 0.15);
+    return c;
+}
+function colorAmbient() {
+    const c = new THREE.Color();
+    c.setHSL(0.57 + (Math.random() - 0.5) * 0.06, 0.55 + Math.random() * 0.15, 0.22 + Math.random() * 0.14);
+    return c;
+}
+
+// ──────── Shaders ────────
+// Region/energy modulation lives in the vertex shader (per-particle size & alpha); the
+// fragment shader turns every point into a soft radial "glow dot" instead of a hard square,
+// which is what gives the multi-layer glow look without a separate bloom post-process pass.
+const VERTEX_SHADER = `
+attribute vec3 aColor;
+attribute float aSize;
+attribute vec3 aMeta; // x = regionId, y = pathT (flow lines only, else -1), z = noiseSeed 0..1
+
+uniform float uTime;
+uniform float uPixelRatio;
+uniform float uSizeScale;
+uniform float uHeadEnergy;
+uniform float uFaceCoreEnergy;
+uniform float uChestCoreEnergy;
+uniform float uAudioLevel;
+
+varying vec3 vColor;
+varying float vAlpha;
+varying float vRegion;
+
+void main() {
+    vRegion = aMeta.x;
+    float pathT = aMeta.y;
+    float seed = aMeta.z;
+
+    float twinkle = 0.85 + 0.15 * sin(uTime * (0.6 + seed) + seed * 6.2831);
+    float size = aSize;
+    float alpha = 1.0;
+
+    if (vRegion == 7.0) { // FACE_CORE
+        float pulse = 0.7 + 0.3 * sin(uTime * 1.3 + seed * 6.2831);
+        size *= (1.0 + uFaceCoreEnergy * 0.9) * pulse;
+        alpha *= 0.5 + 0.5 * pulse;
+    } else if (vRegion == 8.0) { // CHEST_CORE
+        float pulse = 0.7 + 0.3 * sin(uTime * 1.0 + seed * 6.2831 + 1.5);
+        size *= (1.0 + uChestCoreEnergy * 0.8) * pulse;
+        alpha *= 0.45 + 0.45 * pulse;
+    } else if (vRegion == 6.0) { // FLOW — traveling glow pulse along the path
+        float wave = sin(pathT * 12.0 - uTime * 1.8 + seed * 6.2831);
+        float glow = smoothstep(0.5, 1.0, wave);
+        alpha *= 0.30 + 0.70 * glow;
+        size *= 0.75 + 0.7 * glow;
+    } else if (vRegion == 9.0) { // AMBIENT
+        alpha *= 0.35 * twinkle;
+    } else { // HEAD / FACE / NECK / SHOULDER / CHEST structure
+        size *= (1.0 + uHeadEnergy * 0.25) * twinkle;
+        alpha *= 0.72 + 0.28 * twinkle;
+    }
+
+    alpha *= 0.75 + 0.25 * uAudioLevel;
+    vColor = aColor;
+    vAlpha = clamp(alpha, 0.0, 1.0);
+
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = size * uPixelRatio * uSizeScale / -mvPosition.z;
+    gl_Position = projectionMatrix * mvPosition;
+}
+`;
+
+const FRAGMENT_SHADER = `
+uniform float uErrorFlash;
+varying vec3 vColor;
+varying float vAlpha;
+varying float vRegion;
+
+void main() {
+    vec2 uv = gl_PointCoord - vec2(0.5);
+    float d = length(uv) * 2.0;
+    float core = smoothstep(1.0, 0.0, d);
+    float hot = smoothstep(0.35, 0.0, d) * 0.55;
+    float alpha = core * vAlpha;
+    if (alpha < 0.015) discard;
+
+    float hotStrength = vRegion == 7.0 ? 0.32 : 0.75;
+    vec3 col = vColor + hot * hotStrength;
+    if (vRegion == 0.0 || vRegion == 1.0) {
+        col = mix(col, vec3(1.0, 0.28, 0.16), uErrorFlash * 0.55);
+    }
+    gl_FragColor = vec4(col, alpha);
+}
+`;
+
 class ParticleScene {
     static QUALITY_PRESETS = { LOW: 6000, MEDIUM: 12000, HIGH: 18000 };
 
@@ -20,7 +211,6 @@ class ParticleScene {
         this.isRunning = false;
         this.isPaused = false;
 
-        // Three.js setup
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x000000);
 
@@ -31,7 +221,7 @@ class ParticleScene {
 
         this.renderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true, alpha: false });
         this.renderer.setSize(w, h);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); // adaptive
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
 
         this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
             e.preventDefault();
@@ -43,39 +233,47 @@ class ParticleScene {
             this.start();
         }, false);
 
-        // State
         this.currentState = 'IDLE';
         this.audioLevel = 0;
         this.elapsedTime = 0;
         this.frameCount = 0;
+        this.burstT = 0; // SUCCESS outward pulse envelope (1 → 0)
+        this.errorFlash = 0; // ERROR warm-flash envelope (1 → 0)
+        this.headEnergyCur = 0;
+        this.faceCoreEnergyCur = 0.4;
+        this.chestCoreEnergyCur = 0.35;
 
-        // Particles
-        this.particles = [];
+        // Typed-array particle store — avoids per-particle objects/GC pressure in the
+        // render loop. Populated by initializeParticles().
+        this.particleCountActual = 0;
+        this.positions = null;
+        this.startPositions = null;
+        this.targetPositions = null;
+        this.meta = null; // [region, pathT, noiseSeed] per particle
         this.particleGeometry = null;
         this.particleSystem = null;
+        this.layout = null; // anatomical constants from computeLayout()
 
-        // Configuration (overridden by configure() before start())
         this.config = {
             quality: 'AUTO',
             particleCount: ParticleScene.QUALITY_PRESETS.MEDIUM,
-            assemblyDurationMs: 3000,
+            assemblyDurationMs: 4200,
             animationSpeedMultiplier: 1.0,
             assemblyEnabled: true,
             idleScale: 1.0,
             headRadius: 80,
+            debug: false,
         };
 
-        // Performance monitoring (one-shot AUTO-quality downgrade if FPS is poor)
         this.perfHistory = [];
         this.perfLastTime = performance.now();
         this.autoDowngraded = false;
         this.lastFrameTime = performance.now();
 
-        // Handle resize
         window.addEventListener('resize', () => this.onWindowResize());
     }
 
-    /** Muss vor start() aufgerufen werden. opts: {quality, animationSpeedMultiplier, assemblyEnabled} */
+    /** Muss vor start() aufgerufen werden. opts: {quality, animationSpeedMultiplier, assemblyEnabled, debug} */
     configure(opts = {}) {
         const quality = opts.quality || 'AUTO';
         this.config.quality = quality;
@@ -84,6 +282,7 @@ class ParticleScene {
             : (ParticleScene.QUALITY_PRESETS[quality] || ParticleScene.QUALITY_PRESETS.MEDIUM);
         this.config.animationSpeedMultiplier = opts.animationSpeedMultiplier > 0 ? opts.animationSpeedMultiplier : 1.0;
         this.config.assemblyEnabled = opts.assemblyEnabled !== false;
+        this.config.debug = opts.debug === true;
         this.log(`Particle quality: ${quality} (${this.config.particleCount} particles), ` +
             `speed=${this.config.animationSpeedMultiplier}x, assembly=${this.config.assemblyEnabled}`);
     }
@@ -103,6 +302,8 @@ class ParticleScene {
         this.isRunning = true;
         this.isPaused = false;
         this.log('ParticleScene initialized');
+        this.layout = this.computeLayout();
+        this.frameCamera();
         this.generateTargetGeometry();
         this.initializeParticles();
         this.animate();
@@ -125,18 +326,25 @@ class ParticleScene {
         this.elapsedTime = 0;
         this.frameCount = 0;
         this.audioLevel = 0;
+        this.burstT = 0;
+        this.errorFlash = 0;
         this.assemblyCompleteLogged = false;
-        if (this.particles.length === 0) {
+        if (!this.particleSystem) {
             this.initializeParticles();
-        } else {
-            // Fresh spawn positions every time — never just re-fade an already-assembled figure.
-            this.particles.forEach(p => {
-                p.startPosition = this.randomStartPosition();
-                p.position.copy(p.startPosition);
-                p.progress = 0;
-                p.age = Math.random() * 1000;
-            });
+            return;
         }
+        // Fresh spawn positions every time — never just re-fade an already-assembled figure.
+        for (let i = 0; i < this.particleCountActual; i++) {
+            const s = this.randomStartPosition();
+            const idx = i * 3;
+            this.startPositions[idx] = s.x;
+            this.startPositions[idx + 1] = s.y;
+            this.startPositions[idx + 2] = s.z;
+            this.positions[idx] = s.x;
+            this.positions[idx + 1] = s.y;
+            this.positions[idx + 2] = s.z;
+        }
+        this.particleGeometry.attributes.position.needsUpdate = true;
     }
 
     setState(stateName) {
@@ -146,7 +354,8 @@ class ParticleScene {
 
         if (stateName === 'ASSEMBLING' && !this.config.assemblyEnabled) {
             // Assembly-animation disabled in settings → snap straight to the finished figure.
-            this.particles.forEach(p => p.position.copy(p.targetPosition));
+            this.positions.set(this.targetPositions);
+            if (this.particleGeometry) this.particleGeometry.attributes.position.needsUpdate = true;
             this.currentState = 'IDLE';
             this.log('Assembly completed (instant, animation disabled)');
             window.particleInterface?.setState('IDLE');
@@ -167,173 +376,498 @@ class ParticleScene {
 
     setAudioLevel(level) {
         this.audioLevel = Math.max(0, Math.min(1, level));
-        // Affects particle motion in LISTENING and SPEAKING states
+    }
+
+    // ──────── Private: Layout & Geometry ────────
+
+    /**
+     * Anatomical layout constants for the bust, in world units, scaled by
+     * s = headRadius / 80 so config.headRadius stays the single "figure size" knob.
+     * Stacked bottom-up: chest → neck → head, with shoulders branching off the chest top.
+     */
+    computeLayout() {
+        const s = this.config.headRadius / 80;
+        const chestTopY = 40 * s;
+        const chestBottomY = -70 * s;
+        const neckBottomY = chestTopY;
+        const neckTopY = 95 * s;
+        const headHalfHeight = 82 * s;
+        const headBottomY = neckTopY + 8 * s; // slight overlap into the neck, no gap
+        const headCenterY = headBottomY + headHalfHeight;
+        const headTopY = headCenterY + headHalfHeight;
+        const shoulderCenterY = chestTopY;
+
+        return {
+            s,
+            headCenterY,
+            headHalfHeight,
+            headHalfWidthMax: 55 * s,
+            headHalfDepthMax: 50 * s,
+            headTopY,
+            headBottomY,
+            neckTopY,
+            neckBottomY,
+            neckHalfWidth: 22 * s,
+            neckHalfDepth: 20 * s,
+            shoulderCenterY,
+            shoulderReachX: 160 * s,
+            shoulderDropY: 45 * s,
+            chestTopY,
+            chestBottomY,
+            chestHalfWidthTop: 150 * s,
+            chestHalfWidthBottom: 90 * s,
+            chestHalfDepth: 55 * s,
+            chestCoreY: chestTopY - 20 * s,
+            chestCoreZ: 40 * s,
+            faceCoreY: headCenterY + headHalfHeight * 0.12,
+            faceCoreZ: headProfileAt(0.12).rz * 50 * s * 0.55,
+        };
+    }
+
+    /** Positions/sizes the camera so the whole bust fills ~80% of the screen height. */
+    frameCamera() {
+        const L = this.layout;
+        const figureHeight = L.headTopY - L.chestBottomY;
+        const figureCenterY = (L.headTopY + L.chestBottomY) / 2;
+        const fillFraction = 0.80;
+        const fovRad = THREE.MathUtils.degToRad(this.camera.fov);
+        const distance = figureHeight / (2 * Math.tan(fovRad / 2) * fillFraction);
+        this.camera.position.set(0, figureCenterY, THREE.MathUtils.clamp(distance, 260, 1400));
+        this.camera.updateProjectionMatrix();
+    }
+
+    /**
+     * Builds the full point cloud (plain array, setup-time only) across all regions, then
+     * hands off to initializeParticles() to pack it into typed arrays / GPU buffers.
+     */
+    generateTargetGeometry() {
+        const L = this.layout;
+        const budget = this.config.particleCount;
+        const pts = [];
+
+        const faceCoreBudget = Math.round(budget * 0.09);
+        const chestCoreBudget = Math.round(budget * 0.008);
+        const coreBudget = faceCoreBudget + chestCoreBudget;
+        const remaining = budget - coreBudget;
+        const structuralBudget = Math.round(remaining * 0.66);
+        const flowBudget = Math.round(remaining * 0.27);
+        const ambientBudget = remaining - structuralBudget - flowBudget;
+
+        const headBudget = Math.round(structuralBudget * 0.43);
+        const neckBudget = Math.round(structuralBudget * 0.11);
+        const shoulderBudget = Math.round(structuralBudget * 0.22);
+        const chestBudget = structuralBudget - headBudget - neckBudget - shoulderBudget;
+
+        this.genHeadSurface(pts, headBudget, L);
+        this.genNeck(pts, neckBudget, L);
+        this.genShoulder(pts, Math.round(shoulderBudget / 2), L, -1);
+        this.genShoulder(pts, shoulderBudget - Math.round(shoulderBudget / 2), L, 1);
+        this.genChest(pts, chestBudget, L);
+        this.genFlowPaths(pts, flowBudget, L);
+        this.genFaceCore(pts, faceCoreBudget, L);
+        this.genVolumetricCluster(pts, chestCoreBudget, REGION.CHEST_CORE, 0, L.chestCoreY, L.chestCoreZ, 9 * L.s, 12 * L.s, 7 * L.s, colorChestCore, 3.0);
+        this.genAmbient(pts, ambientBudget, L);
+
+        // Pad/trim to the exact configured budget (rounding remainders only).
+        while (pts.length < budget) {
+            const src = pts[Math.floor(Math.random() * pts.length)];
+            pts.push({ ...src, x: src.x + (Math.random() - 0.5) * 3, y: src.y + (Math.random() - 0.5) * 3, z: src.z + (Math.random() - 0.5) * 3 });
+        }
+        this.targetPoints = pts.slice(0, budget);
+    }
+
+    genHeadSurface(pts, budget, L) {
+        // Stacked camera-facing scan lines keep the faceless oval readable instead of
+        // turning it into a transparent wireframe globe.
+        const haloBudget = Math.round(budget * 0.16);
+        const bandBudget = budget - haloBudget;
+        const rings = Math.max(26, Math.round(Math.sqrt(bandBudget * 0.55)));
+        const segments = Math.max(20, Math.round(bandBudget / rings));
+        for (let i = 0; i < rings; i++) {
+            const u = i / (rings - 1);
+            const h = 1 - 2 * u;
+            const prof = headProfileAt(h);
+            const y = L.headCenterY + h * L.headHalfHeight;
+            for (let j = 0; j < segments; j++) {
+                const xNorm = (j / (segments - 1)) * 2 - 1;
+                const x = xNorm * prof.rx * L.headHalfWidthMax;
+                const z = Math.sqrt(Math.max(0, 1 - xNorm * xNorm)) * prof.rz * L.headHalfDepthMax;
+                pts.push({ x, y, z, region: REGION.HEAD, color: colorCyanStructure(), size: 1.8 * L.s, pathT: -1 });
+            }
+        }
+
+        // Several slightly offset silhouette passes create the bright electric-cyan rim.
+        const passes = 4;
+        const perPass = Math.max(40, Math.floor(haloBudget / passes));
+        for (let pass = 0; pass < passes; pass++) {
+            for (const side of [-1, 1]) {
+                for (let i = 0; i < Math.floor(perPass / 2); i++) {
+                    const h = 1 - 2 * (i / (Math.floor(perPass / 2) - 1));
+                    const prof = headProfileAt(h);
+                    const spread = (pass - (passes - 1) / 2) * 1.35 * L.s;
+                    pts.push({
+                        x: side * (prof.rx * L.headHalfWidthMax + spread),
+                        y: L.headCenterY + h * L.headHalfHeight,
+                        z: 4 * L.s + pass * 0.4 * L.s,
+                        region: REGION.HEAD,
+                        color: colorFlow(),
+                        size: 2.7 * L.s,
+                        pathT: -1,
+                    });
+                }
+            }
+        }
+    }
+
+    /** Large warm energy field made from horizontal contour strands; no facial features. */
+    genFaceCore(pts, budget, L) {
+        const rings = 30;
+        const perRing = Math.max(14, Math.floor(budget / rings));
+        const halfH = 43 * L.s;
+        const halfW = 34 * L.s;
+        for (let row = 0; row < rings; row++) {
+            const h = 1 - (row / (rings - 1)) * 2;
+            const rowWidth = halfW * Math.sqrt(Math.max(0, 1 - h * h));
+            const y = L.faceCoreY + h * halfH;
+            for (let j = 0; j < perRing; j++) {
+                const xNorm = (j / (perRing - 1)) * 2 - 1;
+                const radial = Math.sqrt(Math.max(0, 1 - xNorm * xNorm - h * h * 0.45));
+                const intensity = radial * (0.72 + Math.random() * 0.28);
+                pts.push({
+                    x: xNorm * rowWidth,
+                    y: y + Math.sin(xNorm * Math.PI) * 1.4 * L.s,
+                    z: 46 * L.s + radial * 3 * L.s,
+                    region: REGION.FACE_CORE,
+                    color: colorFaceCore(intensity),
+                    size: (2.4 + intensity * 1.45) * L.s,
+                    pathT: row / (rings - 1),
+                });
+            }
+        }
+    }
+
+    /** Subtle front-facing feature lines: brow, nose ridge, cheeks, jawline, mouth line. */
+    genFaceStructure(pts, budget, L) {
+        const s = L.s;
+        const addChain = (points3d, count, sizeMul = 1) => {
+            const curve = new THREE.CatmullRomCurve3(points3d.map(p => new THREE.Vector3(p[0], p[1], p[2])));
+            const sampled = curve.getSpacedPoints(Math.max(2, count - 1));
+            for (const p of sampled) {
+                pts.push({
+                    x: p.x + (Math.random() - 0.5) * 2.5 * s,
+                    y: p.y + (Math.random() - 0.5) * 2.5 * s,
+                    z: p.z + (Math.random() - 0.5) * 2.5 * s,
+                    region: REGION.FACE,
+                    color: colorCyanStructure(),
+                    size: 1.9 * s * sizeMul,
+                    pathT: -1,
+                });
+            }
+        };
+
+        const featureCount = 6; // brow(L/R), cheek(L/R), jaw(L/R) share budget; nose+mouth fixed small
+        const perFeature = Math.max(4, Math.round((budget * 0.8) / featureCount));
+
+        for (const side of [-1, 1]) {
+            const browZ = headProfileAt(0.35).rz * L.headHalfDepthMax * 0.95;
+            addChain([
+                [side * 14 * s, L.headCenterY + L.headHalfHeight * 0.38, browZ],
+                [side * 32 * s, L.headCenterY + L.headHalfHeight * 0.34, browZ * 0.96],
+                [side * 46 * s, L.headCenterY + L.headHalfHeight * 0.26, browZ * 0.88],
+            ], perFeature);
+
+            const cheekZ = headProfileAt(-0.15).rz * L.headHalfDepthMax * 0.9;
+            addChain([
+                [side * 30 * s, L.headCenterY - L.headHalfHeight * 0.02, cheekZ],
+                [side * 44 * s, L.headCenterY - L.headHalfHeight * 0.18, cheekZ * 0.92],
+                [side * 36 * s, L.headCenterY - L.headHalfHeight * 0.34, cheekZ * 0.8],
+            ], perFeature);
+
+            const jawPts = [];
+            for (let t = 0; t <= 1; t += 0.34) {
+                const h = -0.35 - t * 0.6;
+                const prof = headProfileAt(h);
+                jawPts.push([side * prof.rx * L.headHalfWidthMax * 0.9, L.headCenterY + h * L.headHalfHeight, prof.rz * L.headHalfDepthMax * 0.95]);
+            }
+            addChain(jawPts, perFeature, 0.85);
+        }
+
+        // Nose ridge: centered, proud of the base surface, brow → tip → philtrum.
+        const noseZ = headProfileAt(0.1).rz * L.headHalfDepthMax;
+        addChain([
+            [0, L.headCenterY + L.headHalfHeight * 0.32, noseZ * 0.9],
+            [0, L.headCenterY + L.headHalfHeight * 0.10, noseZ * 1.18],
+            [0, L.headCenterY - L.headHalfHeight * 0.05, noseZ * 1.22],
+            [0, L.headCenterY - L.headHalfHeight * 0.14, noseZ * 1.05],
+        ], Math.max(4, Math.round(budget * 0.1)), 0.9);
+
+        // Mouth line: short, subtle, no eye-ring equivalent.
+        const mouthZ = headProfileAt(-0.55).rz * L.headHalfDepthMax * 0.98;
+        addChain([
+            [-16 * s, L.headCenterY - L.headHalfHeight * 0.55, mouthZ],
+            [0, L.headCenterY - L.headHalfHeight * 0.57, mouthZ * 1.03],
+            [16 * s, L.headCenterY - L.headHalfHeight * 0.55, mouthZ],
+        ], Math.max(4, Math.round(budget * 0.1)), 0.8);
+
+        // Eye-hollow hint: sparse, slightly recessed points — deliberately NOT a ring/circle.
+        for (const side of [-1, 1]) {
+            for (let i = 0; i < 6; i++) {
+                const z = headProfileAt(0.22).rz * L.headHalfDepthMax * (0.7 + Math.random() * 0.15);
+                pts.push({
+                    x: side * (26 + Math.random() * 16) * s,
+                    y: L.headCenterY + L.headHalfHeight * (0.20 + Math.random() * 0.08),
+                    z,
+                    region: REGION.FACE,
+                    color: colorCyanStructure(),
+                    size: 1.5 * s,
+                    pathT: -1,
+                });
+            }
+        }
+    }
+
+    genNeck(pts, budget, L) {
+        const strands = 18;
+        const perStrand = Math.max(8, Math.round(budget / strands));
+        for (let strand = 0; strand < strands; strand++) {
+            const xNorm = (strand / (strands - 1)) * 2 - 1;
+            for (let i = 0; i < perStrand; i++) {
+                const t = i / (perStrand - 1);
+                const waist = 1.18 - 0.28 * Math.sin(t * Math.PI);
+                const warm = Math.abs(xNorm) < 0.62;
+                pts.push({
+                    x: xNorm * L.neckHalfWidth * waist + Math.sin(t * Math.PI * 2 + xNorm) * 2.2 * L.s,
+                    y: L.neckBottomY + t * (L.neckTopY - L.neckBottomY),
+                    z: L.neckHalfDepth * (0.75 + 0.18 * Math.cos(xNorm * Math.PI)),
+                    region: REGION.NECK,
+                    color: warm ? colorNeckEnergy() : colorCyanStructure(),
+                    size: (warm ? 2.0 : 1.65) * L.s,
+                    pathT: t,
+                });
+            }
+        }
+    }
+
+    genShoulder(pts, budget, L, side) {
+        const region = side < 0 ? REGION.SHOULDER_L : REGION.SHOULDER_R;
+        const layers = 8;
+        const perLayer = Math.max(12, Math.round(budget / layers));
+        for (let layer = 0; layer < layers; layer++) {
+            const depth = layer / (layers - 1);
+            for (let i = 0; i < perLayer; i++) {
+                const t = i / (perLayer - 1);
+                pts.push({
+                    x: side * (L.neckHalfWidth + (L.shoulderReachX - L.neckHalfWidth) * Math.sin(t * Math.PI / 2)),
+                    y: L.shoulderCenterY + (18 - depth * 36) * L.s - L.shoulderDropY * (1 - Math.cos(t * Math.PI / 2)),
+                    z: (34 - depth * 52) * L.s,
+                    region,
+                    color: colorCyanStructure(),
+                    size: (layer === 0 ? 2.4 : 1.7) * L.s,
+                    pathT: t,
+                });
+            }
+        }
+    }
+
+    genChest(pts, budget, L) {
+        const contours = 30;
+        const perContour = Math.max(16, Math.floor(budget / contours));
+        for (let row = 0; row < contours; row++) {
+            const down = row / (contours - 1);
+            const halfW = (145 - down * 78) * L.s;
+            const baseY = L.chestTopY - (18 + down * 88) * L.s;
+            const stagger = (row % 2) * 0.5;
+            for (let i = 0; i < perContour; i++) {
+                const xn = (((i + stagger) / perContour) * 2 - 1);
+                const shoulderLift = Math.pow(Math.abs(xn), 1.55) * (22 - down * 8) * L.s;
+                pts.push({
+                    x: xn * halfW,
+                    y: baseY + shoulderLift,
+                    z: (21 + Math.sqrt(Math.max(0, 1 - xn * xn)) * 27 - down * 8) * L.s,
+                    region: REGION.CHEST,
+                    color: colorCyanStructure(),
+                    size: 1.7 * L.s,
+                    pathT: i / (perContour - 1),
+                });
+            }
+        }
+    }
+
+    genFlowPaths(pts, budget, L) {
+        const s = L.s;
+        const paths = [];
+        for (const side of [-1, 1]) {
+            for (let lane = 0; lane < 5; lane++) {
+                const offset = lane * 3.2 * s;
+                paths.push([
+                    [side * offset, L.headCenterY + L.headHalfHeight * 0.68, 45 * s],
+                    [side * (24 + lane * 3) * s, L.headCenterY + L.headHalfHeight * 0.30, 46 * s],
+                    [side * (42 + lane * 2) * s, L.headCenterY - L.headHalfHeight * 0.10, 38 * s],
+                    [side * (18 + lane) * s, L.neckTopY, 22 * s],
+                    [side * (8 + lane) * s, (L.neckTopY + L.neckBottomY) / 2, 20 * s],
+                ]);
+                paths.push([
+                    [side * (5 + lane * 4) * s, L.chestCoreY, L.chestCoreZ + 3 * s],
+                    [side * (50 + lane * 8) * s, L.shoulderCenterY + (8 - lane * 3) * s, 35 * s],
+                    [side * L.shoulderReachX * (0.60 + lane * 0.06), L.shoulderCenterY - L.shoulderDropY * (0.35 + lane * 0.09), 22 * s],
+                    [side * L.shoulderReachX * 0.96, L.shoulderCenterY - L.shoulderDropY * 0.95, 10 * s],
+                ]);
+            }
+        }
+
+        const perPath = Math.max(6, Math.round(budget / paths.length));
+        for (const keypoints of paths) {
+            const curve = new THREE.CatmullRomCurve3(keypoints.map(p => new THREE.Vector3(p[0], p[1], p[2])));
+            const sampled = curve.getSpacedPoints(perPath - 1);
+            sampled.forEach((p, idx) => {
+                pts.push({
+                    x: p.x, y: p.y, z: p.z,
+                    region: REGION.FLOW,
+                    color: colorFlow(),
+                    size: 1.7 * s,
+                    pathT: idx / (perPath - 1),
+                });
+            });
+        }
+    }
+
+    /** Soft volumetric particle blob (multiple depth layers) — not a solid sphere/circle. */
+    genVolumetricCluster(pts, budget, region, cx, cy, cz, rx, ry, rz, colorFn, baseSize) {
+        for (let i = 0; i < budget; i++) {
+            // Uniform-in-volume-ish sampling: cube root of a random radius fraction + random
+            // direction gives more points toward the center falling off softly outward.
+            const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+            const r = Math.cbrt(Math.random());
+            const x = cx + dir.x * rx * r;
+            const y = cy + dir.y * ry * r;
+            const z = cz + dir.z * rz * r;
+            pts.push({ x, y, z, region, color: colorFn(1 - r), size: baseSize * (1.3 - 0.5 * r), pathT: -1 });
+        }
+    }
+
+    genAmbient(pts, budget, L) {
+        const s = L.s;
+        const cx = 0, cy = (L.headTopY + L.chestBottomY) / 2;
+        for (let i = 0; i < budget; i++) {
+            const dir = new THREE.Vector3(Math.random() - 0.5, (Math.random() - 0.5) * 1.3, Math.random() - 0.5).normalize();
+            const r = 0.55 + Math.random() * 0.55; // mostly outside the figure's own volume
+            pts.push({
+                x: cx + dir.x * 230 * s * r,
+                y: cy + dir.y * 220 * s * r,
+                z: dir.z * 170 * s * r,
+                region: REGION.AMBIENT,
+                color: colorAmbient(),
+                size: 1.4 * s,
+                pathT: -1,
+            });
+        }
     }
 
     // ──────── Private: Initialization ────────
 
-    generateTargetGeometry() {
-        /**
-         * Generate target positions for the particles to form a humanoid AI head.
-         * A procedural point cloud approximating:
-         * - Head dome (sphere)
-         * - Face features (eye sockets, nose, mouth)
-         * - Neck/shoulder outline
-         */
-
-        const targetPoints = [];
-
-        // Head dome: upper hemisphere
-        const headSegments = 40;
-        const headRings = 30;
-        for (let i = 0; i < headRings; i++) {
-            const phi = (Math.PI * i) / headRings;
-            for (let j = 0; j < headSegments; j++) {
-                const theta = (2 * Math.PI * j) / headSegments;
-                const x = this.config.headRadius * Math.sin(phi) * Math.cos(theta);
-                const y = this.config.headRadius * Math.cos(phi);
-                const z = this.config.headRadius * Math.sin(phi) * Math.sin(theta);
-                targetPoints.push(new THREE.Vector3(x, y, z));
-            }
-        }
-
-        // Face details: eye sockets (simplified)
-        const eyeOffsetY = 30;
-        const eyeOffsetZ = 50;
-        const eyeRadius = 12;
-        for (let side of [-1, 1]) {
-            for (let i = 0; i < 100; i++) {
-                const angle = (2 * Math.PI * i) / 100;
-                const x = side * (this.config.headRadius * 0.4);
-                const y = eyeOffsetY + eyeRadius * Math.cos(angle);
-                const z = eyeOffsetZ + eyeRadius * Math.sin(angle);
-                targetPoints.push(new THREE.Vector3(x, y, z));
-            }
-        }
-
-        // Neck/shoulder: tapered cone
-        const neckSegments = 30;
-        for (let hgt = 0; hgt < 60; hgt += 2) {
-            const progress = hgt / 60;
-            const radius = this.config.headRadius * 0.3 * (1 - progress);
-            for (let i = 0; i < neckSegments; i++) {
-                const theta = (2 * Math.PI * i) / neckSegments;
-                const x = radius * Math.cos(theta);
-                const y = -hgt * 2;
-                const z = radius * Math.sin(theta);
-                targetPoints.push(new THREE.Vector3(x, y, z));
-            }
-        }
-
-        // Pad to target count if needed
-        while (targetPoints.length < this.config.particleCount) {
-            const existing = targetPoints[Math.floor(Math.random() * targetPoints.length)];
-            const jitter = 3;
-            targetPoints.push(
-                new THREE.Vector3(
-                    existing.x + (Math.random() - 0.5) * jitter,
-                    existing.y + (Math.random() - 0.5) * jitter,
-                    existing.z + (Math.random() - 0.5) * jitter
-                )
-            );
-        }
-
-        this.targetGeometry = targetPoints.slice(0, this.config.particleCount);
-    }
-
     initializeParticles() {
-        // Clear old system
         if (this.particleSystem) {
             this.scene.remove(this.particleSystem);
             this.particleSystem.geometry.dispose();
             this.particleSystem.material.dispose();
         }
-        this.particles = [];
 
-        const positions = new Float32Array(this.config.particleCount * 3);
-        const colors = new Float32Array(this.config.particleCount * 3);
+        const n = this.targetPoints.length;
+        this.particleCountActual = n;
+        this.positions = new Float32Array(n * 3);
+        this.startPositions = new Float32Array(n * 3);
+        this.targetPositions = new Float32Array(n * 3);
+        this.meta = new Float32Array(n * 3);
+        const colors = new Float32Array(n * 3);
+        const sizes = new Float32Array(n);
 
-        for (let i = 0; i < this.config.particleCount; i++) {
+        for (let i = 0; i < n; i++) {
+            const p = this.targetPoints[i];
             const idx = i * 3;
 
-            // Random start position (spawn from edges/depth/cloud)
             const startPos = this.randomStartPosition();
-            positions[idx] = startPos.x;
-            positions[idx + 1] = startPos.y;
-            positions[idx + 2] = startPos.z;
+            this.startPositions[idx] = startPos.x;
+            this.startPositions[idx + 1] = startPos.y;
+            this.startPositions[idx + 2] = startPos.z;
+            this.positions[idx] = startPos.x;
+            this.positions[idx + 1] = startPos.y;
+            this.positions[idx + 2] = startPos.z;
 
-            // Color: cyan/white glow
-            const hue = 0.5 + Math.random() * 0.1; // cyan
-            const color = new THREE.Color();
-            color.setHSL(hue, 0.8, 0.6);
-            colors[idx] = color.r;
-            colors[idx + 1] = color.g;
-            colors[idx + 2] = color.b;
+            this.targetPositions[idx] = p.x;
+            this.targetPositions[idx + 1] = p.y;
+            this.targetPositions[idx + 2] = p.z;
 
-            // Particle data
-            this.particles.push({
-                position: new THREE.Vector3(startPos.x, startPos.y, startPos.z),
-                startPosition: startPos,
-                targetPosition: this.targetGeometry[i],
-                velocity: new THREE.Vector3(
-                    (Math.random() - 0.5) * 2,
-                    (Math.random() - 0.5) * 2,
-                    (Math.random() - 0.5) * 2
-                ),
-                mass: 1.0,
-                progress: 0, // 0 = at start, 1 = at target
-                age: Math.random() * 1000, // offset animation start
-                noiseSeed: Math.random(),
-            });
+            this.meta[idx] = p.region;
+            this.meta[idx + 1] = p.pathT;
+            this.meta[idx + 2] = Math.random();
+
+            colors[idx] = p.color.r;
+            colors[idx + 1] = p.color.g;
+            colors[idx + 2] = p.color.b;
+            sizes[i] = p.size;
         }
 
         const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        const posAttr = new THREE.BufferAttribute(this.positions, 3);
+        posAttr.setUsage(THREE.DynamicDrawUsage);
+        geometry.setAttribute('position', posAttr);
+        geometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+        geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+        geometry.setAttribute('aMeta', new THREE.BufferAttribute(this.meta, 3));
+        this.particleGeometry = geometry;
 
-        const material = new THREE.PointsMaterial({
-            size: 2.0,
-            sizeAttenuation: true,
-            vertexColors: true,
+        this.uniforms = {
+            uTime: { value: 0 },
+            uPixelRatio: { value: Math.min(window.devicePixelRatio || 1, 1.5) },
+            uSizeScale: { value: this.computeSizeScale() },
+            uHeadEnergy: { value: 0 },
+            uFaceCoreEnergy: { value: 0.4 },
+            uChestCoreEnergy: { value: 0.35 },
+            uAudioLevel: { value: 0 },
+            uErrorFlash: { value: 0 },
+        };
+
+        const material = new THREE.ShaderMaterial({
+            uniforms: this.uniforms,
+            vertexShader: VERTEX_SHADER,
+            fragmentShader: FRAGMENT_SHADER,
             transparent: true,
-            opacity: 0.9,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
         });
 
         this.particleSystem = new THREE.Points(geometry, material);
         this.scene.add(this.particleSystem);
-        this.log(`Initialized ${this.config.particleCount} particles`);
+        this.log(`Initialized ${n} particles (holographic humanoid bust)`);
+    }
+
+    computeSizeScale() {
+        // Mirrors THREE's built-in sizeAttenuation formula so gl_PointSize stays predictable
+        // in pixels regardless of the auto-framed camera distance.
+        const fovRad = THREE.MathUtils.degToRad(this.camera.fov);
+        return this.renderer.domElement.clientHeight / (2 * Math.tan(fovRad / 2));
     }
 
     randomStartPosition() {
-        /**
-         * Spawn from edges/depth:
-         * - Screen edges (left/right/top/bottom)
-         * - Behind camera (depth)
-         * - Random cloud around origin
-         */
         const mode = Math.random();
-
         if (mode < 0.3) {
-            // Screen edge
             const side = Math.random() < 0.5 ? 'left' : 'right';
             return new THREE.Vector3(
-                side === 'left' ? -400 : 400,
-                (Math.random() - 0.5) * 800,
-                (Math.random() - 0.5) * 400
+                side === 'left' ? -450 : 450,
+                (Math.random() - 0.5) * 900,
+                (Math.random() - 0.5) * 450
             );
         } else if (mode < 0.6) {
-            // Depth (behind camera)
             return new THREE.Vector3(
-                (Math.random() - 0.5) * 600,
-                (Math.random() - 0.5) * 600,
-                -800 + Math.random() * 400
+                (Math.random() - 0.5) * 700,
+                (Math.random() - 0.5) * 700,
+                -850 + Math.random() * 400
             );
         } else {
-            // Random cloud
             return new THREE.Vector3(
-                (Math.random() - 0.5) * 800,
-                (Math.random() - 0.5) * 800,
-                (Math.random() - 0.5) * 800
+                (Math.random() - 0.5) * 900,
+                (Math.random() - 0.5) * 900,
+                (Math.random() - 0.5) * 900
             );
         }
     }
@@ -342,85 +876,96 @@ class ParticleScene {
 
     animate() {
         if (!this.isRunning) return;
-
         if (!this.isPaused) {
             this.update();
             this.render();
             this.monitorPerformance();
         }
-
         requestAnimationFrame(() => this.animate());
     }
 
     update() {
-        const deltaTime = 0.016 * this.config.animationSpeedMultiplier; // ~60fps, speed-scaled
-        this.elapsedTime += deltaTime * 1000; // ms
+        const dt = 0.016 * this.config.animationSpeedMultiplier;
+        this.elapsedTime += dt * 1000;
         this.frameCount++;
 
-        // Update particle positions
-        switch (this.currentState) {
-            case 'ASSEMBLING':
-                this.updateAssembly(deltaTime);
-                break;
-            case 'LISTENING':
-                this.updateListening(deltaTime);
-                break;
-            case 'THINKING':
-                this.updateThinking(deltaTime);
-                break;
-            case 'SPEAKING':
-                this.updateSpeaking(deltaTime);
-                break;
-            default: // IDLE, SUCCESS, ERROR
-                this.updateIdle(deltaTime);
+        this.updateEnvelopes(dt);
+
+        if (this.currentState === 'ASSEMBLING') {
+            this.simulateAssembling(dt);
+        } else {
+            this.simulateSettled(dt);
         }
 
-        // Update geometry
-        const positions = this.particleSystem.geometry.attributes.position.array;
-        for (let i = 0; i < this.particles.length; i++) {
-            const p = this.particles[i];
-            const idx = i * 3;
-            positions[idx] = p.position.x;
-            positions[idx + 1] = p.position.y;
-            positions[idx + 2] = p.position.z;
-        }
-        this.particleSystem.geometry.attributes.position.needsUpdate = true;
+        this.particleGeometry.attributes.position.needsUpdate = true;
 
-        // Rotate scene slightly for visual interest
-        this.particleSystem.rotation.y += 0.0003 * this.config.animationSpeedMultiplier;
+        // Frontal view stays the primary view — only a very small organic sway, no
+        // continuous spin (per design: this is a face-forward holographic bust).
+        this.particleSystem.rotation.y = Math.sin(this.elapsedTime * 0.00015) * THREE.MathUtils.degToRad(3);
     }
 
-    updateAssembly(deltaTime) {
-        /**
-         * ASSEMBLING state: particles flow from start to target position.
-         * Different per-particle delays create a cascading assembly effect.
-         */
-        const assemblyProgress = Math.min(1, this.elapsedTime / this.config.assemblyDurationMs);
+    /** Decays one-shot envelopes and eases the state-driven uniforms toward their targets. */
+    updateEnvelopes(dt) {
+        this.burstT = Math.max(0, this.burstT - dt * 1.4);
+        this.errorFlash = Math.max(0, this.errorFlash - dt * 2.0);
 
-        for (let i = 0; i < this.particles.length; i++) {
-            const p = this.particles[i];
-            const individualDelay = p.noiseSeed; // 0..1
-            const staggeredProgress = Math.max(0, assemblyProgress - individualDelay * 0.5);
+        let headTarget = 0, faceTarget = 0.4, chestTarget = 0.35;
+        switch (this.currentState) {
+            case 'THINKING':
+                headTarget = 1.0; faceTarget = 0.85; break;
+            case 'LISTENING':
+                headTarget = 0.35; faceTarget = 0.65; break;
+            case 'SPEAKING':
+                headTarget = 0.15; faceTarget = 0.5 + this.audioLevel * 0.5; break;
+            default:
+                break;
+        }
+        chestTarget = Math.min(1, chestTarget + this.burstT * 1.1);
+        faceTarget = Math.min(1, faceTarget + this.burstT * 0.4);
 
-            if (staggeredProgress > 0) {
-                // Easing: start slow, accelerate, ease into place
-                const eased = this.easeInOutCubic(staggeredProgress);
+        const k = Math.min(1, dt * 3);
+        this.headEnergyCur += (headTarget - this.headEnergyCur) * k;
+        this.faceCoreEnergyCur += (faceTarget - this.faceCoreEnergyCur) * k;
+        this.chestCoreEnergyCur += (chestTarget - this.chestCoreEnergyCur) * k;
 
-                // Interpolate toward target
-                p.position.lerpVectors(p.startPosition, p.targetPosition, eased);
+        this.uniforms.uTime.value = this.elapsedTime * 0.001;
+        this.uniforms.uHeadEnergy.value = this.headEnergyCur;
+        this.uniforms.uFaceCoreEnergy.value = this.faceCoreEnergyCur;
+        this.uniforms.uChestCoreEnergy.value = this.chestCoreEnergyCur;
+        this.uniforms.uAudioLevel.value = this.audioLevel;
+        this.uniforms.uErrorFlash.value = this.errorFlash;
+    }
 
-                // Add some noise for organic (non-linear) motion
-                const noiseAmount = (1 - eased) * 30;
-                p.position.x += Math.sin(p.age * 0.002 + i) * noiseAmount;
-                p.position.y += Math.cos(p.age * 0.0025 + i) * noiseAmount;
+    /** Hierarchical build-up: each region eases in within its own REGION_WINDOW slice. */
+    simulateAssembling(dt) {
+        const progress = Math.min(1, this.elapsedTime / this.config.assemblyDurationMs);
+        const pos = this.positions, start = this.startPositions, target = this.targetPositions, meta = this.meta;
+        let allDone = true;
 
-                p.age++;
-            }
+        for (let i = 0; i < this.particleCountActual; i++) {
+            const idx = i * 3;
+            const region = meta[idx];
+            const seed = meta[idx + 2];
+            const regionWindow = REGION_WINDOW[region] || [0, 1];
+            const jitter = (seed - 0.5) * 0.08;
+            // The stochastic start offset must never prevent the global 100% frame from
+            // completing (especially for core regions whose nominal window already ends at 1).
+            const local = progress >= 1
+                ? 1
+                : Math.max(0, Math.min(1, (progress - (regionWindow[0] + jitter)) / (regionWindow[1] - regionWindow[0])));
+            if (local < 1) allDone = false;
+            const eased = easeInOutCubic(local);
 
-            p.progress = staggeredProgress;
+            const noiseAmount = (1 - eased) * 26;
+            const nx = Math.sin(seed * 900 + i) * noiseAmount;
+            const ny = Math.cos(seed * 700 + i) * noiseAmount;
+
+            pos[idx] = start[idx] + (target[idx] - start[idx]) * eased + nx;
+            pos[idx + 1] = start[idx + 1] + (target[idx + 1] - start[idx + 1]) * eased + ny;
+            pos[idx + 2] = start[idx + 2] + (target[idx + 2] - start[idx + 2]) * eased;
         }
 
-        if (assemblyProgress >= 1 && !this.assemblyCompleteLogged) {
+        if (progress >= 1 && allDone && !this.assemblyCompleteLogged) {
             this.assemblyCompleteLogged = true;
             this.log('Assembly completed');
             this.currentState = 'IDLE';
@@ -428,109 +973,76 @@ class ParticleScene {
         }
     }
 
-    updateListening(deltaTime) {
-        /**
-         * LISTENING: particles subtly react to audio input (microphone level).
-         * Affected particles: face/mouth area primarily.
-         */
-        const mouthThreshold = -50; // Y coordinate for mouth area
+    /** Baseline motion for IDLE/LISTENING/THINKING/SPEAKING/SUCCESS/ERROR. */
+    simulateSettled(dt) {
+        const pos = this.positions, target = this.targetPositions, meta = this.meta;
+        const L = this.layout;
+        const t = this.elapsedTime;
+        const state = this.currentState;
+        const thinkSpin = state === 'THINKING' ? dt * 0.6 : 0;
 
-        for (let i = 0; i < this.particles.length; i++) {
-            const p = this.particles[i];
+        for (let i = 0; i < this.particleCountActual; i++) {
+            const idx = i * 3;
+            const region = meta[idx];
+            const seed = meta[idx + 2];
 
-            // Base idle motion
-            const baseMotion = Math.sin(this.elapsedTime * 0.002 + i * 0.1) * 2;
-            p.position.y += baseMotion * deltaTime;
+            // Gentle correction back toward the settled shape (recovers from any perturbation).
+            pos[idx] += (target[idx] - pos[idx]) * 0.03;
+            pos[idx + 1] += (target[idx + 1] - pos[idx + 1]) * 0.03;
+            pos[idx + 2] += (target[idx + 2] - pos[idx + 2]) * 0.03;
 
-            // Audio-reactive mouth/face
-            if (p.position.y < mouthThreshold) {
-                const audioMotion = this.audioLevel * 15;
-                p.position.y += audioMotion * Math.sin(this.elapsedTime * 0.01 + i);
+            const breathAmp = region === REGION.AMBIENT ? 0.15 : 0.45;
+            pos[idx + 1] += Math.sin(t * 0.0008 + seed * 6.2831) * breathAmp * dt;
+
+            if (region === REGION.AMBIENT) {
+                // Slow, irregular free wander — some particles drift out and back in.
+                pos[idx] += Math.sin(t * 0.00025 + seed * 12.0) * 4 * dt;
+                pos[idx + 1] += Math.cos(t * 0.0002 + seed * 9.0) * 3 * dt;
+                pos[idx + 2] += Math.sin(t * 0.00018 + seed * 5.0) * 3 * dt;
+                continue;
             }
 
-            p.age++;
-        }
-    }
-
-    updateThinking(deltaTime) {
-        /**
-         * THINKING: head/brain area pulsates with energy.
-         * Creates rotating/spiraling effect in upper portion.
-         */
-        const brainCenterY = 60;
-        const brainRadius = 100;
-
-        for (let i = 0; i < this.particles.length; i++) {
-            const p = this.particles[i];
-
-            const dy = p.position.y - brainCenterY;
-            const distToBrain = Math.sqrt(
-                Math.pow(p.position.x, 2) + Math.pow(dy, 2) + Math.pow(p.position.z, 2)
-            );
-
-            if (distToBrain < brainRadius * 1.2) {
-                const angle = Math.atan2(p.position.z, p.position.x);
-                const radius = Math.sqrt(Math.pow(p.position.x, 2) + Math.pow(p.position.z, 2));
-
-                const newAngle = angle + (this.elapsedTime * 0.004);
-                p.position.x = radius * Math.cos(newAngle);
-                p.position.z = radius * Math.sin(newAngle);
-
-                const pulse = Math.sin(this.elapsedTime * 0.005) * 5;
-                p.position.x *= 1 + pulse * 0.02;
-                p.position.z *= 1 + pulse * 0.02;
+            if (thinkSpin && (region === REGION.HEAD || region === REGION.FACE)) {
+                const dx = pos[idx] - 0, dz = pos[idx + 2] - 0;
+                const angle = Math.atan2(dz, dx) + thinkSpin * (0.3 + seed * 0.4);
+                const radius = Math.sqrt(dx * dx + dz * dz);
+                pos[idx] = radius * Math.cos(angle);
+                pos[idx + 2] = radius * Math.sin(angle);
             }
 
-            p.age++;
-        }
-    }
-
-    updateSpeaking(deltaTime) {
-        /**
-         * SPEAKING: mouth region responds to TTS audio level.
-         */
-        const mouthY = -40;
-        const mouthRadius = 50;
-
-        for (let i = 0; i < this.particles.length; i++) {
-            const p = this.particles[i];
-
-            if (Math.abs(p.position.y - mouthY) < mouthRadius * 1.5) {
-                const scale = 1 + this.audioLevel * 0.3;
-                p.position.x *= scale;
-                p.position.z *= scale;
-                p.position.y += this.audioLevel * 2 * deltaTime;
+            if (state === 'SPEAKING' && this.audioLevel > 0.02 &&
+                (region === REGION.FACE || region === REGION.NECK || region === REGION.CHEST)) {
+                const wave = Math.sin(t * 0.012 + seed * 6.2831) * this.audioLevel * 3.5;
+                pos[idx + 1] += wave * dt;
             }
 
-            p.age++;
-        }
-    }
+            if (state === 'ERROR' && this.errorFlash > 0.05 && (region === REGION.HEAD || region === REGION.FACE)) {
+                pos[idx] += (Math.random() - 0.5) * this.errorFlash * 1.5;
+                pos[idx + 1] += (Math.random() - 0.5) * this.errorFlash * 1.5;
+            }
 
-    updateIdle(deltaTime) {
-        /**
-         * IDLE: subtle, natural motion (breathing, slight drift).
-         */
-        for (let i = 0; i < this.particles.length; i++) {
-            const p = this.particles[i];
-
-            const breath = Math.sin(this.elapsedTime * 0.0008 + i * 0.01) * 0.5;
-
-            const toTarget = new THREE.Vector3().subVectors(p.targetPosition, p.position);
-            toTarget.multiplyScalar(0.001); // small correction back to the settled figure
-
-            p.position.add(toTarget);
-            p.position.y += breath * deltaTime;
-
-            p.age++;
+            if (this.burstT > 0.01 &&
+                (region === REGION.CHEST || region === REGION.SHOULDER_L || region === REGION.SHOULDER_R || region === REGION.FLOW)) {
+                const dx = pos[idx] - 0, dy = pos[idx + 1] - L.chestCoreY, dz = pos[idx + 2] - L.chestCoreZ;
+                const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+                const push = this.burstT * 4;
+                pos[idx] += (dx / len) * push;
+                pos[idx + 1] += (dy / len) * push;
+                pos[idx + 2] += (dz / len) * push;
+            }
         }
     }
 
     playSuccessAnimation() {
-        // Brief positive burst; auto-return to IDLE is handled by ParticleAssistantController.
+        // Brief cyan/white pulse from the chest core outward; decays in updateEnvelopes()/
+        // simulateSettled(). Auto-return to IDLE is handled by ParticleAssistantController.
+        this.burstT = 1.0;
     }
 
     playErrorAnimation() {
-        // Warning flash; auto-return to IDLE is handled by ParticleAssistantController.
+        // Brief particle instability + warm/red flash on the face; decays automatically.
+        // Auto-return to IDLE is handled by ParticleAssistantController.
+        this.errorFlash = 1.0;
     }
 
     // ──────── Rendering ────────
@@ -541,21 +1053,20 @@ class ParticleScene {
     }
 
     updateDebugInfo() {
-        if (this.frameCount % 30 !== 0) return; // Update every 30 frames
-        const fps = Math.round(1 / (performance.now() - this.lastFrameTime) * 1000);
-        this.lastFrameTime = performance.now();
-
         const info = document.getElementById('debugInfo');
-        if (info) {
-            info.textContent = `FPS: ${fps} | State: ${this.currentState} | Particles: ${this.config.particleCount} | Quality: ${this.config.quality}`;
+        if (!info) return;
+        if (!this.config.debug) {
+            if (info.textContent) info.textContent = '';
+            return;
         }
+        if (this.frameCount % 30 !== 0) return;
+        const now = performance.now();
+        const fps = Math.round(30000 / Math.max(1, now - this.lastFrameTime));
+        this.lastFrameTime = now;
+        info.textContent = `FPS: ${fps} | State: ${this.currentState} | Particles: ${this.config.particleCount} | Quality: ${this.config.quality}`;
     }
 
     // ──────── Utilities ────────
-
-    easeInOutCubic(t) {
-        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    }
 
     /**
      * One-shot adaptive downgrade: if AUTO-quality sustains a low framerate for ~2s,
@@ -567,7 +1078,7 @@ class ParticleScene {
         const dt = now - this.perfLastTime;
         this.perfLastTime = now;
         this.perfHistory.push(dt);
-        if (this.perfHistory.length < 120) return; // ~2s at 60fps
+        if (this.perfHistory.length < 120) return;
 
         const avgMs = this.perfHistory.reduce((a, b) => a + b, 0) / this.perfHistory.length;
         this.perfHistory = [];
@@ -593,6 +1104,10 @@ class ParticleScene {
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(w, h);
+        if (this.uniforms) {
+            this.uniforms.uPixelRatio.value = Math.min(window.devicePixelRatio || 1, 1.5);
+            this.uniforms.uSizeScale.value = this.computeSizeScale();
+        }
     }
 
     log(msg) {

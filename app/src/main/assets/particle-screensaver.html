@@ -69,6 +69,7 @@
                 quality: params.get('quality') || 'AUTO',
                 animationSpeedMultiplier: parseFloat(params.get('speed')) || 1.0,
                 assemblyEnabled: params.get('assembly') !== '0',
+                debug: params.get('debug') === '1',
             });
             window.particleScene.start();
             // Every fresh load starts from scattered chaos and assembles — this does not depend
