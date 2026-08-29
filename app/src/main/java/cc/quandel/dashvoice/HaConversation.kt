@@ -6,8 +6,8 @@ import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 
 /**
- * Ruft HAs `conversation/process` direkt per REST auf — für lokale Sofort-Befehle, die
- * on-device (Vosk) erkannt wurden und an Whisper vorbei ausgeführt werden sollen.
+ * Ruft HAs `conversation/process` direkt per REST auf — für Sprachverarbeitung via
+ * HomeIntent, Whisper oder andere Conversation Agents.
  *
  * Synchron (blockierend) — vom Aufrufer auf einem Background-Thread nutzen.
  * Muster (HttpsURLConnection + Bearer-Token) aus [HaSensorFetcher] übernommen.
@@ -15,12 +15,13 @@ import javax.net.ssl.HttpsURLConnection
 class HaConversation(private val haUrl: String, private val token: String) {
 
     /** responseType: action_done | query_answer | error … ; ok = Befehl ausgeführt. */
-    data class Result(val responseType: String, val speech: String) {
+    data class Result(val responseType: String, val speech: String, val conversationId: String = "") {
         val ok: Boolean get() = responseType == "action_done"
     }
 
     fun process(
         text: String,
+        conversationId: String? = null,
         agentId: String = "conversation.home_assistant",
         language: String = "de"
     ): Result? {
@@ -38,6 +39,9 @@ class HaConversation(private val haUrl: String, private val token: String) {
                 .put("text", text)
                 .put("agent_id", agentId)
                 .put("language", language)
+            if (!conversationId.isNullOrBlank()) {
+                body.put("conversation_id", conversationId)
+            }
             conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val json = JSONObject(conn.inputStream.bufferedReader().readText())
             conn.disconnect()
@@ -45,7 +49,8 @@ class HaConversation(private val haUrl: String, private val token: String) {
             val rtype = resp?.optString("response_type", "") ?: ""
             val speech = resp?.optJSONObject("speech")
                 ?.optJSONObject("plain")?.optString("speech", "") ?: ""
-            Result(rtype, speech)
+            val respConvId = json.optString("conversation_id", "")
+            Result(rtype, speech, respConvId)
         } catch (e: Exception) {
             Log.w(TAG, "conversation/process: ${e.message}")
             null

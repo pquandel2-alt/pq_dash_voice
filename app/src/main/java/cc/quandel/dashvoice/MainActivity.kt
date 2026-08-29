@@ -31,13 +31,14 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import cc.quandel.dashvoice.particle.ParticleAssistantController
 import cc.quandel.dashvoice.util.AppLog
 import org.json.JSONObject
+import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import javax.net.ssl.HttpsURLConnection
 import kotlin.concurrent.thread
 
 /** Kiosk shell: full-screen Lovelace WebView, tap-to-talk, clock screensaver with HA sensors. */
@@ -67,10 +68,12 @@ class MainActivity : AppCompatActivity() {
     private var micPulseAnimator: ObjectAnimator? = null
 
     private var sensorFetcher: HaSensorFetcher? = null
+    private var particleController: ParticleAssistantController? = null
 
     private lateinit var doorbellOverlay: View
     private lateinit var doorbellWebView: WebView
     @Volatile private var doorbellWasOn = false
+    private var doorbellLastLoadedAt = 0L
 
     private val ui = Handler(Looper.getMainLooper())
 
@@ -193,6 +196,12 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = WebViewClient()
         webView.loadUrl(prefs.dashboardUrl)
 
+        // Initialisiere Partikel-Screensaver (wird später geladen, wenn nötig)
+        if (prefs.enableParticleScreensaver) {
+            particleController = ParticleAssistantController(saverWebView)
+            AppLog.i("UI", "Particle Screensaver initialized")
+        }
+
         // Screensaver-Graph-WebView (Brain-Graph-Add-on, ?kiosk). Lädt erst beim Anzeigen.
         saverWebView.settings.apply {
             javaScriptEnabled = true
@@ -243,6 +252,23 @@ class MainActivity : AppCompatActivity() {
             hideDoorbell()
         }
 
+        // Klingel-WebView vorladen und im Hintergrund WEITERLAUFEN lassen (nicht pausieren!),
+        // damit showDoorbell() nur noch die Sichtbarkeit umschalten muss statt die HA-Lovelace-
+        // Seite komplett neu zu laden. WebView.onPause() würde auch den Live-Stream (und dessen
+        // Token-Refresh-Timer) einfrieren – beim Resume bleibt dann nur ein Standbild übrig.
+        doorbellWebView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            mediaPlaybackRequiresUserGesture = false
+        }
+        doorbellWebView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                super.onPageFinished(view, url)
+                doorbellLastLoadedAt = System.currentTimeMillis()
+            }
+        }
+        loadDoorbellCamera()
+
         findViewById<Button>(R.id.logToggle).setOnClickListener {
             logScroll.visibility =
                 if (logScroll.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -275,7 +301,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val WEBVIEW_RELOAD_MS = 6L * 60 * 60 * 1000  // alle 6h Dashboard neu laden
         private const val CLOCK_ENTITY_POLL_MS = 15_000L
-        private const val DOORBELL_ENTITY_POLL_MS = 3_000L
+        private const val DOORBELL_ENTITY_POLL_MS = 1_000L
+        private const val DOORBELL_STALE_MS = 10L * 60 * 1000  // danach vor dem Anzeigen neu laden statt nur zu resumen
     }
 
     /** Fragt einmalig den Zustand einer HA-Entität per REST ab (Ergebnis kommt im Main-Thread an). */
@@ -283,7 +310,7 @@ class MainActivity : AppCompatActivity() {
         thread(name = "ha-clock-entity-fetch") {
             val state = try {
                 val base = haUrl.trimEnd('/')
-                val conn = URL("$base/api/states/$entityId").openConnection() as HttpsURLConnection
+                val conn = URL("$base/api/states/$entityId").openConnection() as HttpURLConnection
                 conn.setRequestProperty("Authorization", "Bearer $token")
                 conn.connectTimeout = 5000
                 conn.readTimeout = 5000
@@ -336,21 +363,37 @@ class MainActivity : AppCompatActivity() {
             setStatusDot(connected = false)
         }
         VoiceEvents.onWake = {
-            dismissScreensaver()
-            voiceTranscriptText.visibility = View.GONE
-            voiceResponseText.visibility = View.GONE
-            voiceTranscriptText.text = ""
-            voiceResponseText.text = ""
-            voiceStateText.text = "Zuhören…"
-            voiceOverlay.animate().cancel()
-            voiceOverlay.alpha = 1f
-            voiceOverlay.visibility = View.VISIBLE
-            startMicPulse()
-            voiceAnimation.setState(VoiceAnimationView.State.LISTENING)
-            voiceAnimation.startAnimation()
-            setWebViewBlur(true)
+            val screensaverActive = screensaver.visibility == View.VISIBLE
+
+            if (screensaverActive && prefs.enableParticleScreensaver) {
+                // Screensaver aktiv → Partikel als Voice-UI verwenden
+                particleController?.transitionTo(
+                    cc.quandel.dashvoice.particle.ParticleState.LISTENING
+                )
+                AppLog.i("UI", "Wake detected during particle screensaver → LISTENING")
+            } else {
+                // Dashboard aktiv → klassisches Voice-Overlay
+                if (screensaverActive) {
+                    dismissScreensaver()
+                }
+                voiceTranscriptText.visibility = View.GONE
+                voiceResponseText.visibility = View.GONE
+                voiceTranscriptText.text = ""
+                voiceResponseText.text = ""
+                voiceStateText.text = "Zuhören…"
+                voiceOverlay.animate().cancel()
+                voiceOverlay.alpha = 1f
+                voiceOverlay.visibility = View.VISIBLE
+                startMicPulse()
+                voiceAnimation.setState(VoiceAnimationView.State.LISTENING)
+                voiceAnimation.startAnimation()
+                setWebViewBlur(true)
+            }
         }
         VoiceEvents.onTranscript = { text ->
+            particleController?.transitionTo(
+                cc.quandel.dashvoice.particle.ParticleState.THINKING
+            )
             if (text.isNotEmpty()) {
                 voiceTranscriptText.text = text
                 voiceTranscriptText.visibility = View.VISIBLE
@@ -360,6 +403,9 @@ class MainActivity : AppCompatActivity() {
             voiceAnimation.setState(VoiceAnimationView.State.THINKING)
         }
         VoiceEvents.onResponse = { text ->
+            particleController?.transitionTo(
+                cc.quandel.dashvoice.particle.ParticleState.SPEAKING
+            )
             if (text.isNotEmpty()) {
                 voiceResponseText.text = text
                 voiceResponseText.visibility = View.VISIBLE
@@ -368,26 +414,33 @@ class MainActivity : AppCompatActivity() {
             voiceAnimation.setState(VoiceAnimationView.State.SPEAKING)
         }
         VoiceEvents.onTtsLevel = { level ->
+            particleController?.setAudioLevel(level)
             voiceAnimation.setMouthLevel(level)
         }
         VoiceEvents.onCommandDone = { _ ->
             // Sofortbefehl ausgeführt: grüne „Erledigt"-Animation kurz zeigen, dann ausblenden (stumm).
+            particleController?.transitionTo(
+                cc.quandel.dashvoice.particle.ParticleState.SUCCESS
+            )
             stopMicPulse()
             voiceTranscriptText.visibility = View.GONE
             voiceResponseText.visibility = View.GONE
             voiceStateText.text = "✓ Erledigt"
             voiceAnimation.setState(VoiceAnimationView.State.DONE)
             setWebViewBlur(false)
-            voiceOverlay.animate()
-                .alpha(0f)
-                .setStartDelay(1200)
-                .setDuration(450)
-                .withEndAction {
-                    voiceAnimation.stopAnimation()
-                    voiceOverlay.visibility = View.GONE
-                    voiceOverlay.alpha = 1f
-                }
-                .start()
+            if (screensaver.visibility != View.VISIBLE) {
+                // Overlay nur bei Dashboard-Modus
+                voiceOverlay.animate()
+                    .alpha(0f)
+                    .setStartDelay(1200)
+                    .setDuration(450)
+                    .withEndAction {
+                        voiceAnimation.stopAnimation()
+                        voiceOverlay.visibility = View.GONE
+                        voiceOverlay.alpha = 1f
+                    }
+                    .start()
+            }
             resetScreensaverTimer()
         }
         VoiceEvents.onTimerSet = { label ->
@@ -432,18 +485,24 @@ class MainActivity : AppCompatActivity() {
             resetScreensaverTimer()
         }
         VoiceEvents.onIdle = {
+            particleController?.transitionTo(
+                cc.quandel.dashvoice.particle.ParticleState.IDLE
+            )
             stopMicPulse()
             voiceAnimation.stopAnimation()
             setWebViewBlur(false)
-            voiceOverlay.animate()
-                .alpha(0f)
-                .setStartDelay(2000)
-                .setDuration(500)
-                .withEndAction {
-                    voiceOverlay.visibility = View.GONE
-                    voiceOverlay.alpha = 1f
-                }
-                .start()
+            if (screensaver.visibility != View.VISIBLE) {
+                // Overlay nur bei Dashboard-Modus
+                voiceOverlay.animate()
+                    .alpha(0f)
+                    .setStartDelay(2000)
+                    .setDuration(500)
+                    .withEndAction {
+                        voiceOverlay.visibility = View.GONE
+                        voiceOverlay.alpha = 1f
+                    }
+                    .start()
+            }
             resetScreensaverTimer()
         }
         VoiceEvents.onNetworkAvailable = {
@@ -556,12 +615,25 @@ class MainActivity : AppCompatActivity() {
     private fun showScreensaver() {
         val brainUrl = prefs.screensaverBrainUrl
         val entityConfigured = prefs.screensaverClockEntity.isNotEmpty()
-        // Ist die Erzwingen-Entität gesetzt, entscheidet nur sie (unabhängig von der Uhrzeit) —
-        // sonst greift wie bisher das Zeitfenster.
         val showClock = if (entityConfigured) clockForced else isWithinClockWindow()
         val lp = window.attributes
 
-        if (brainUrl.isNotEmpty() && !showClock) {
+        // Neuer Modus: Partikel-Screensaver (Priorität: höher als Brain-Graph)
+        if (prefs.enableParticleScreensaver && !showClock) {
+            // Partikel-KI-Screensaver
+            clockBlock.visibility = View.GONE
+            saverWebView.visibility = View.VISIBLE
+            saverWebView.onResume()
+
+            // Laden der lokalen HTML-Datei mit Partikel-Szene
+            val assetUrl = "file:///android_asset/particle-screensaver.html"
+            AppLog.i("Saver", "Lade Partikel-Screensaver: $assetUrl")
+            saverWebView.loadUrl(assetUrl)
+
+            // Partikel-Scene initialisieren und starten
+            particleController?.resetScene()
+            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        } else if (brainUrl.isNotEmpty() && !showClock) {
             // Brain-Graph-Modus: Live-3D-Graph in Vollbild, normale Helligkeit (soll sichtbar sein).
             clockBlock.visibility = View.GONE
             saverWebView.visibility = View.VISIBLE
@@ -573,7 +645,7 @@ class MainActivity : AppCompatActivity() {
                 ),
                 prefs.screensaverGesturesEnabled
             )
-            AppLog.i("Saver", "Lade Screensaver-URL: $saverUrl (gesturesEnabled=${prefs.screensaverGesturesEnabled}, camPerm=${hasCameraPermission()})")
+            AppLog.i("Saver", "Lade Brain-Graph-URL: $saverUrl (gesturesEnabled=${prefs.screensaverGesturesEnabled}, camPerm=${hasCameraPermission()})")
             saverWebView.loadUrl(saverUrl)
             lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         } else {
@@ -599,6 +671,7 @@ class MainActivity : AppCompatActivity() {
         resetScreensaverTimer()
         sensorFetcher?.stop()
         sensorFetcher = null
+        particleController?.pause()
 
         screensaver.animate().alpha(0f).setDuration(400).withEndAction {
             screensaver.visibility = View.GONE
@@ -643,16 +716,19 @@ class MainActivity : AppCompatActivity() {
         sensorFetcher?.start()
     }
 
+    /** Lädt die Klingel-Kamera-URL (neu). Setzt doorbellLastLoadedAt beim Fertigladen (onPageFinished). */
+    private fun loadDoorbellCamera() {
+        if (prefs.doorbellCameraUrl.isBlank()) return
+        doorbellWebView.loadUrl(prefs.doorbellCameraUrl)
+    }
+
     private fun showDoorbell() {
         doorbellWasOn = true
         dismissScreensaver()
-        doorbellWebView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            mediaPlaybackRequiresUserGesture = false
+        val staleMs = System.currentTimeMillis() - doorbellLastLoadedAt
+        if (doorbellLastLoadedAt == 0L || staleMs > DOORBELL_STALE_MS) {
+            loadDoorbellCamera()
         }
-        doorbellWebView.webViewClient = WebViewClient()
-        doorbellWebView.loadUrl(prefs.doorbellCameraUrl)
         doorbellOverlay.alpha = 0f
         doorbellOverlay.visibility = View.VISIBLE
         doorbellOverlay.animate().alpha(1f).setDuration(400).start()
@@ -665,7 +741,6 @@ class MainActivity : AppCompatActivity() {
         ui.removeCallbacks(dismissDoorbell)
         doorbellOverlay.animate().alpha(0f).setDuration(350).withEndAction {
             doorbellOverlay.visibility = View.GONE
-            doorbellWebView.loadUrl("about:blank")
         }.start()
     }
 
@@ -761,6 +836,7 @@ class MainActivity : AppCompatActivity() {
         stopMicPulse()
         voiceAnimation.stopAnimation()
         sensorFetcher?.stop()
+        particleController?.destroy()
         ui.removeCallbacksAndMessages(null)
         super.onDestroy()
     }

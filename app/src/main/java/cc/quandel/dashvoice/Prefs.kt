@@ -162,6 +162,26 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_DOORBELL_DISMISS, 30)
         set(v) = sp.edit().putInt(KEY_DOORBELL_DISMISS, v).apply()
 
+    /** Partikel-Screensaver aktiviert. */
+    var enableParticleScreensaver: Boolean
+        get() = sp.getBoolean(KEY_PARTICLE_ENABLED, true)
+        set(v) = sp.edit().putBoolean(KEY_PARTICLE_ENABLED, v).apply()
+
+    /** Partikel-Qualität: AUTO, LOW, MEDIUM, HIGH. */
+    var particleQuality: String
+        get() = sp.getString(KEY_PARTICLE_QUALITY, "AUTO") ?: "AUTO"
+        set(v) = sp.edit().putString(KEY_PARTICLE_QUALITY, v).apply()
+
+    /** Konversations-ID für HomeIntent Follow-ups. */
+    var conversationId: String
+        get() = sp.getString(KEY_CONVERSATION_ID, "") ?: ""
+        set(v) = sp.edit().putString(KEY_CONVERSATION_ID, v).apply()
+
+    /** HomeIntent als Conversation Agent verwenden (statt default). */
+    var useHomeIntent: Boolean
+        get() = sp.getBoolean(KEY_USE_HOMEINTENT, false)
+        set(v) = sp.edit().putBoolean(KEY_USE_HOMEINTENT, v).apply()
+
     companion object {
         const val DEFAULT_URL = "https://ha.quandel-home.cc"
         const val DEFAULT_PORT = 10700
@@ -201,5 +221,9 @@ class Prefs(context: Context) {
         private const val KEY_DOORBELL_ENTITY = "doorbell_entity"
         private const val KEY_DOORBELL_URL = "doorbell_url"
         private const val KEY_DOORBELL_DISMISS = "doorbell_dismiss"
+        private const val KEY_PARTICLE_ENABLED = "particle_screensaver_enabled"
+        private const val KEY_PARTICLE_QUALITY = "particle_quality"
+        private const val KEY_CONVERSATION_ID = "conversation_id"
+        private const val KEY_USE_HOMEINTENT = "use_homeintent"
     }
 }
