@@ -134,6 +134,39 @@ class SettingsActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(sb: SeekBar) {}
         })
 
+        // ── KI-Partikel-Screensaver ──
+        val particleEnabled = findViewById<CheckBox>(R.id.particleEnabled)
+        particleEnabled.isChecked = prefs.enableParticleScreensaver
+
+        val particleQualitySpinner = findViewById<Spinner>(R.id.particleQuality)
+        val qualityOptions = listOf("AUTO", "LOW", "MEDIUM", "HIGH")
+        particleQualitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, qualityOptions)
+            .also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        particleQualitySpinner.setSelection(qualityOptions.indexOf(prefs.particleQuality).coerceAtLeast(0))
+
+        val particleAssemblyAnim = findViewById<CheckBox>(R.id.particleAssemblyAnim)
+        particleAssemblyAnim.isChecked = prefs.particleAssemblyAnimEnabled
+
+        // Geschwindigkeit: progress 0..150 → 0.5×..2.0×
+        val particleSpeedLabel = findViewById<TextView>(R.id.particleSpeedLabel)
+        val particleSpeedBar = findViewById<SeekBar>(R.id.particleSpeed)
+        particleSpeedBar.progress = ((prefs.particleAnimationSpeed - 0.5f) * 100f).toInt().coerceIn(0, 150)
+        particleSpeedLabel.text = "Animationsgeschwindigkeit: ${"%.1f".format(prefs.particleAnimationSpeed)}×"
+        particleSpeedBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
+                particleSpeedLabel.text = "Animationsgeschwindigkeit: ${"%.1f".format(progress / 100f + 0.5f)}×"
+            }
+            override fun onStartTrackingTouch(sb: SeekBar) {}
+            override fun onStopTrackingTouch(sb: SeekBar) {}
+        })
+
+        val particleShowTranscript = findViewById<CheckBox>(R.id.particleShowTranscript)
+        particleShowTranscript.isChecked = prefs.particleShowTranscript
+        val particleShowResponse = findViewById<CheckBox>(R.id.particleShowResponse)
+        particleShowResponse.isChecked = prefs.particleShowResponse
+        val useHomeIntent = findViewById<CheckBox>(R.id.useHomeIntent)
+        useHomeIntent.isChecked = prefs.useHomeIntent
+
         // ── default launcher button ──
         findViewById<Button>(R.id.setDefaultLauncher).setOnClickListener {
             try {
@@ -167,6 +200,13 @@ class SettingsActivity : AppCompatActivity() {
             prefs.wakeThreshold       = 0.80f - wakeThBar.progress / 100f
             prefs.noiseSuppressionEnabled = noiseSuppression.isChecked
             prefs.animationStyle      = animSpinner.selectedItemPosition
+            prefs.enableParticleScreensaver = particleEnabled.isChecked
+            prefs.particleQuality     = qualityOptions[particleQualitySpinner.selectedItemPosition]
+            prefs.particleAssemblyAnimEnabled = particleAssemblyAnim.isChecked
+            prefs.particleAnimationSpeed = particleSpeedBar.progress / 100f + 0.5f
+            prefs.particleShowTranscript = particleShowTranscript.isChecked
+            prefs.particleShowResponse = particleShowResponse.isChecked
+            prefs.useHomeIntent       = useHomeIntent.isChecked
             // Audio-Einstellungen (Empfindlichkeit/Gain/NS) sofort an den laufenden Dienst übergeben.
             VoiceService.applySettings(this)
             Toast.makeText(this, "Gespeichert – Audio sofort aktiv", Toast.LENGTH_SHORT).show()

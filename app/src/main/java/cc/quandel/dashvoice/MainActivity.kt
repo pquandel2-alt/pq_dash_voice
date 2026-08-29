@@ -394,6 +394,7 @@ class MainActivity : AppCompatActivity() {
             particleController?.transitionTo(
                 cc.quandel.dashvoice.particle.ParticleState.THINKING
             )
+            if (prefs.particleShowTranscript) particleController?.setTranscript(text)
             if (text.isNotEmpty()) {
                 voiceTranscriptText.text = text
                 voiceTranscriptText.visibility = View.VISIBLE
@@ -406,6 +407,7 @@ class MainActivity : AppCompatActivity() {
             particleController?.transitionTo(
                 cc.quandel.dashvoice.particle.ParticleState.SPEAKING
             )
+            if (prefs.particleShowResponse) particleController?.setResponse(text)
             if (text.isNotEmpty()) {
                 voiceResponseText.text = text
                 voiceResponseText.visibility = View.VISIBLE
@@ -422,6 +424,8 @@ class MainActivity : AppCompatActivity() {
             particleController?.transitionTo(
                 cc.quandel.dashvoice.particle.ParticleState.SUCCESS
             )
+            particleController?.setTranscript(null)
+            particleController?.setResponse(null)
             stopMicPulse()
             voiceTranscriptText.visibility = View.GONE
             voiceResponseText.visibility = View.GONE
@@ -488,6 +492,8 @@ class MainActivity : AppCompatActivity() {
             particleController?.transitionTo(
                 cc.quandel.dashvoice.particle.ParticleState.IDLE
             )
+            particleController?.setTranscript(null)
+            particleController?.setResponse(null)
             stopMicPulse()
             voiceAnimation.stopAnimation()
             setWebViewBlur(false)
@@ -618,15 +624,23 @@ class MainActivity : AppCompatActivity() {
         val showClock = if (entityConfigured) clockForced else isWithinClockWindow()
         val lp = window.attributes
 
-        // Neuer Modus: Partikel-Screensaver (Priorität: höher als Brain-Graph)
+        // Design-Entscheidung: Partikel-Screensaver hat unbedingten Vorrang vor dem Brain-Graph,
+        // sobald enableParticleScreensaver aktiv ist (Default: true). Der Partikel-Assistent ist
+        // das primäre KI-Feature dieser App: Brain-Graph bleibt nur erreichbar, wenn der Nutzer
+        // den Partikel-Screensaver in den Settings explizit deaktiviert (particleEnabled = false).
+        // Kein gleichzeitiger Betrieb beider Modi (eine WebView, ein Screensaver-Slot).
         if (prefs.enableParticleScreensaver && !showClock) {
             // Partikel-KI-Screensaver
             clockBlock.visibility = View.GONE
             saverWebView.visibility = View.VISIBLE
             saverWebView.onResume()
 
-            // Laden der lokalen HTML-Datei mit Partikel-Szene
-            val assetUrl = "file:///android_asset/particle-screensaver.html"
+            // Laden der lokalen HTML-Datei mit Partikel-Szene. Konfiguration per Query-String,
+            // damit sie deterministisch beim Laden verfügbar ist (kein Race mit evaluateJavascript()).
+            val assetUrl = "file:///android_asset/particle-screensaver.html" +
+                "?quality=${prefs.particleQuality}" +
+                "&speed=${prefs.particleAnimationSpeed}" +
+                "&assembly=${if (prefs.particleAssemblyAnimEnabled) "1" else "0"}"
             AppLog.i("Saver", "Lade Partikel-Screensaver: $assetUrl")
             saverWebView.loadUrl(assetUrl)
 

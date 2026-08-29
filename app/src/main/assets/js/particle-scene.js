@@ -10,9 +10,11 @@
  * - SUCCESS: positive energy burst, then IDLE
  * - ERROR: warning animation
  *
- * Performance: targets 60fps with adaptive particle count.
+ * Performance: targets 60fps with adaptive particle count (see configure()).
  */
 class ParticleScene {
+    static QUALITY_PRESETS = { LOW: 6000, MEDIUM: 12000, HIGH: 18000 };
+
     constructor(canvasElement) {
         this.canvas = canvasElement;
         this.isRunning = false;
@@ -29,7 +31,17 @@ class ParticleScene {
 
         this.renderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true, alpha: false });
         this.renderer.setSize(w, h);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // adaptive
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); // adaptive
+
+        this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault();
+            this.isRunning = false;
+            this.log('WebGL context lost');
+        }, false);
+        this.renderer.domElement.addEventListener('webglcontextrestored', () => {
+            this.log('WebGL context restored');
+            this.start();
+        }, false);
 
         // State
         this.currentState = 'IDLE';
@@ -42,28 +54,55 @@ class ParticleScene {
         this.particleGeometry = null;
         this.particleSystem = null;
 
-        // Configuration
+        // Configuration (overridden by configure() before start())
         this.config = {
-            particleCount: 12000,
+            quality: 'AUTO',
+            particleCount: ParticleScene.QUALITY_PRESETS.MEDIUM,
             assemblyDurationMs: 3000,
+            animationSpeedMultiplier: 1.0,
+            assemblyEnabled: true,
             idleScale: 1.0,
             headRadius: 80,
         };
 
-        // Performance monitoring
+        // Performance monitoring (one-shot AUTO-quality downgrade if FPS is poor)
         this.perfHistory = [];
-        this.perfCheckInterval = 60; // frames between checks
+        this.perfLastTime = performance.now();
+        this.autoDowngraded = false;
         this.lastFrameTime = performance.now();
 
         // Handle resize
         window.addEventListener('resize', () => this.onWindowResize());
     }
 
+    /** Muss vor start() aufgerufen werden. opts: {quality, animationSpeedMultiplier, assemblyEnabled} */
+    configure(opts = {}) {
+        const quality = opts.quality || 'AUTO';
+        this.config.quality = quality;
+        this.config.particleCount = quality === 'AUTO'
+            ? this.autoDetectParticleCount()
+            : (ParticleScene.QUALITY_PRESETS[quality] || ParticleScene.QUALITY_PRESETS.MEDIUM);
+        this.config.animationSpeedMultiplier = opts.animationSpeedMultiplier > 0 ? opts.animationSpeedMultiplier : 1.0;
+        this.config.assemblyEnabled = opts.assemblyEnabled !== false;
+        this.log(`Particle quality: ${quality} (${this.config.particleCount} particles), ` +
+            `speed=${this.config.animationSpeedMultiplier}x, assembly=${this.config.assemblyEnabled}`);
+    }
+
+    /** Grobe Geräte-Heuristik für AUTO-Qualität: CPU-Kerne + effektive Pixelzahl. */
+    autoDetectParticleCount() {
+        const cores = navigator.hardwareConcurrency || 4;
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+        const pixels = window.innerWidth * window.innerHeight * pixelRatio;
+        if (cores <= 2 || pixels > 3000000) return ParticleScene.QUALITY_PRESETS.LOW;
+        if (cores <= 4 || pixels > 1500000) return ParticleScene.QUALITY_PRESETS.MEDIUM;
+        return ParticleScene.QUALITY_PRESETS.HIGH;
+    }
+
     start() {
         if (this.isRunning) return;
         this.isRunning = true;
         this.isPaused = false;
-        this.log('ParticleScene started');
+        this.log('ParticleScene initialized');
         this.generateTargetGeometry();
         this.initializeParticles();
         this.animate();
@@ -82,17 +121,20 @@ class ParticleScene {
     }
 
     reset() {
-        this.log('ParticleScene reset');
+        this.log('Screensaver state → ASSEMBLING (scene reset)');
         this.elapsedTime = 0;
         this.frameCount = 0;
         this.audioLevel = 0;
+        this.assemblyCompleteLogged = false;
         if (this.particles.length === 0) {
             this.initializeParticles();
         } else {
-            // Reset particles to start positions
+            // Fresh spawn positions every time — never just re-fade an already-assembled figure.
             this.particles.forEach(p => {
-                p.progress = 0;
+                p.startPosition = this.randomStartPosition();
                 p.position.copy(p.startPosition);
+                p.progress = 0;
+                p.age = Math.random() * 1000;
             });
         }
     }
@@ -102,28 +144,24 @@ class ParticleScene {
         this.currentState = stateName;
         this.log(`Particle state: ${stateName}`);
 
+        if (stateName === 'ASSEMBLING' && !this.config.assemblyEnabled) {
+            // Assembly-animation disabled in settings → snap straight to the finished figure.
+            this.particles.forEach(p => p.position.copy(p.targetPosition));
+            this.currentState = 'IDLE';
+            this.log('Assembly completed (instant, animation disabled)');
+            window.particleInterface?.setState('IDLE');
+            return;
+        }
+
         switch (stateName) {
-            case 'ASSEMBLING':
-                this.reset();
-                break;
-            case 'LISTENING':
-                // Audio-reactive animation ready
-                break;
-            case 'THINKING':
-                // Activate brain area pulsing
-                break;
-            case 'SPEAKING':
-                // Audio level sync active
-                break;
             case 'SUCCESS':
                 this.playSuccessAnimation();
                 break;
             case 'ERROR':
                 this.playErrorAnimation();
                 break;
-            case 'IDLE':
-                // Default subtle motion
-                break;
+            default:
+                break; // LISTENING/THINKING/SPEAKING/ASSEMBLING/IDLE handled per-frame in update()
         }
     }
 
@@ -141,7 +179,6 @@ class ParticleScene {
          * - Head dome (sphere)
          * - Face features (eye sockets, nose, mouth)
          * - Neck/shoulder outline
-         * Approx. 12000 points at roughly 0.5–2.0 unit spacing.
          */
 
         const targetPoints = [];
@@ -176,13 +213,13 @@ class ParticleScene {
 
         // Neck/shoulder: tapered cone
         const neckSegments = 30;
-        for (let h = 0; h < 60; h += 2) {
-            const progress = h / 60;
+        for (let hgt = 0; hgt < 60; hgt += 2) {
+            const progress = hgt / 60;
             const radius = this.config.headRadius * 0.3 * (1 - progress);
             for (let i = 0; i < neckSegments; i++) {
                 const theta = (2 * Math.PI * i) / neckSegments;
                 const x = radius * Math.cos(theta);
-                const y = -h * 2;
+                const y = -hgt * 2;
                 const z = radius * Math.sin(theta);
                 targetPoints.push(new THREE.Vector3(x, y, z));
             }
@@ -206,7 +243,12 @@ class ParticleScene {
 
     initializeParticles() {
         // Clear old system
-        if (this.particleSystem) this.scene.remove(this.particleSystem);
+        if (this.particleSystem) {
+            this.scene.remove(this.particleSystem);
+            this.particleSystem.geometry.dispose();
+            this.particleSystem.material.dispose();
+        }
+        this.particles = [];
 
         const positions = new Float32Array(this.config.particleCount * 3);
         const colors = new Float32Array(this.config.particleCount * 3);
@@ -214,7 +256,7 @@ class ParticleScene {
         for (let i = 0; i < this.config.particleCount; i++) {
             const idx = i * 3;
 
-            // Random start position (spawn from edges)
+            // Random start position (spawn from edges/depth/cloud)
             const startPos = this.randomStartPosition();
             positions[idx] = startPos.x;
             positions[idx + 1] = startPos.y;
@@ -270,8 +312,6 @@ class ParticleScene {
          * - Random cloud around origin
          */
         const mode = Math.random();
-        const w = window.innerWidth;
-        const h = window.innerHeight;
 
         if (mode < 0.3) {
             // Screen edge
@@ -313,7 +353,7 @@ class ParticleScene {
     }
 
     update() {
-        const deltaTime = 0.016; // ~60fps
+        const deltaTime = 0.016 * this.config.animationSpeedMultiplier; // ~60fps, speed-scaled
         this.elapsedTime += deltaTime * 1000; // ms
         this.frameCount++;
 
@@ -347,14 +387,13 @@ class ParticleScene {
         this.particleSystem.geometry.attributes.position.needsUpdate = true;
 
         // Rotate scene slightly for visual interest
-        this.particleSystem.rotation.y += 0.0003;
+        this.particleSystem.rotation.y += 0.0003 * this.config.animationSpeedMultiplier;
     }
 
     updateAssembly(deltaTime) {
         /**
          * ASSEMBLING state: particles flow from start to target position.
-         * Different start delays create a cascading assembly effect.
-         * Assembly takes ~3 seconds total.
+         * Different per-particle delays create a cascading assembly effect.
          */
         const assemblyProgress = Math.min(1, this.elapsedTime / this.config.assemblyDurationMs);
 
@@ -370,7 +409,7 @@ class ParticleScene {
                 // Interpolate toward target
                 p.position.lerpVectors(p.startPosition, p.targetPosition, eased);
 
-                // Add some noise for organic motion
+                // Add some noise for organic (non-linear) motion
                 const noiseAmount = (1 - eased) * 30;
                 p.position.x += Math.sin(p.age * 0.002 + i) * noiseAmount;
                 p.position.y += Math.cos(p.age * 0.0025 + i) * noiseAmount;
@@ -381,13 +420,11 @@ class ParticleScene {
             p.progress = staggeredProgress;
         }
 
-        // Notify when assembly completes
-        if (assemblyProgress >= 0.99 && this.frameCount % 30 === 0) {
-            if (this.frameCount > 30) {
-                // Only once
-                this.currentState = 'IDLE';
-                window.particleInterface?.setState('IDLE');
-            }
+        if (assemblyProgress >= 1 && !this.assemblyCompleteLogged) {
+            this.assemblyCompleteLogged = true;
+            this.log('Assembly completed');
+            this.currentState = 'IDLE';
+            window.particleInterface?.setState('IDLE');
         }
     }
 
@@ -426,14 +463,12 @@ class ParticleScene {
         for (let i = 0; i < this.particles.length; i++) {
             const p = this.particles[i];
 
-            // Distance from brain center
             const dy = p.position.y - brainCenterY;
             const distToBrain = Math.sqrt(
                 Math.pow(p.position.x, 2) + Math.pow(dy, 2) + Math.pow(p.position.z, 2)
             );
 
             if (distToBrain < brainRadius * 1.2) {
-                // Particles in brain region rotate
                 const angle = Math.atan2(p.position.z, p.position.x);
                 const radius = Math.sqrt(Math.pow(p.position.x, 2) + Math.pow(p.position.z, 2));
 
@@ -441,7 +476,6 @@ class ParticleScene {
                 p.position.x = radius * Math.cos(newAngle);
                 p.position.z = radius * Math.sin(newAngle);
 
-                // Pulsate radius
                 const pulse = Math.sin(this.elapsedTime * 0.005) * 5;
                 p.position.x *= 1 + pulse * 0.02;
                 p.position.z *= 1 + pulse * 0.02;
@@ -454,7 +488,6 @@ class ParticleScene {
     updateSpeaking(deltaTime) {
         /**
          * SPEAKING: mouth region responds to TTS audio level.
-         * Simulates speech articulation with particle movement.
          */
         const mouthY = -40;
         const mouthRadius = 50;
@@ -462,14 +495,10 @@ class ParticleScene {
         for (let i = 0; i < this.particles.length; i++) {
             const p = this.particles[i];
 
-            // Mouth area particles (check Y proximity)
             if (Math.abs(p.position.y - mouthY) < mouthRadius * 1.5) {
-                // Scale based on audio level
                 const scale = 1 + this.audioLevel * 0.3;
                 p.position.x *= scale;
                 p.position.z *= scale;
-
-                // Slight upward motion during speech
                 p.position.y += this.audioLevel * 2 * deltaTime;
             }
 
@@ -480,17 +509,14 @@ class ParticleScene {
     updateIdle(deltaTime) {
         /**
          * IDLE: subtle, natural motion (breathing, slight drift).
-         * Very low energy to not distract.
          */
         for (let i = 0; i < this.particles.length; i++) {
             const p = this.particles[i];
 
-            // Breathing: gentle scale pulse
             const breath = Math.sin(this.elapsedTime * 0.0008 + i * 0.01) * 0.5;
 
-            // Return to target if drifted
             const toTarget = new THREE.Vector3().subVectors(p.targetPosition, p.position);
-            toTarget.multiplyScalar(0.001); // small correction
+            toTarget.multiplyScalar(0.001); // small correction back to the settled figure
 
             p.position.add(toTarget);
             p.position.y += breath * deltaTime;
@@ -500,11 +526,11 @@ class ParticleScene {
     }
 
     playSuccessAnimation() {
-        // Brief positive burst (handled by state auto-return in controller)
+        // Brief positive burst; auto-return to IDLE is handled by ParticleAssistantController.
     }
 
     playErrorAnimation() {
-        // Warning flash (handled by state auto-return in controller)
+        // Warning flash; auto-return to IDLE is handled by ParticleAssistantController.
     }
 
     // ──────── Rendering ────────
@@ -521,7 +547,7 @@ class ParticleScene {
 
         const info = document.getElementById('debugInfo');
         if (info) {
-            info.textContent = `FPS: ${fps} | State: ${this.currentState} | Particles: ${this.config.particleCount}`;
+            info.textContent = `FPS: ${fps} | State: ${this.currentState} | Particles: ${this.config.particleCount} | Quality: ${this.config.quality}`;
         }
     }
 
@@ -531,10 +557,34 @@ class ParticleScene {
         return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     }
 
+    /**
+     * One-shot adaptive downgrade: if AUTO-quality sustains a low framerate for ~2s,
+     * drop to the next-lower particle-count tier once and rebuild. Not re-evaluated
+     * continuously to avoid visible thrashing.
+     */
     monitorPerformance() {
-        // TODO: Implement adaptive particle count based on FPS
-        // If FPS drops below 50, reduce particle count slightly
-        // If FPS stable above 55, increase particle count
+        const now = performance.now();
+        const dt = now - this.perfLastTime;
+        this.perfLastTime = now;
+        this.perfHistory.push(dt);
+        if (this.perfHistory.length < 120) return; // ~2s at 60fps
+
+        const avgMs = this.perfHistory.reduce((a, b) => a + b, 0) / this.perfHistory.length;
+        this.perfHistory = [];
+        const avgFps = 1000 / avgMs;
+
+        if (this.config.quality === 'AUTO' && !this.autoDowngraded &&
+            avgFps < 40 && this.config.particleCount > ParticleScene.QUALITY_PRESETS.LOW) {
+            this.autoDowngraded = true;
+            const newCount = Math.max(
+                ParticleScene.QUALITY_PRESETS.LOW,
+                Math.floor(this.config.particleCount * 0.6)
+            );
+            this.log(`Low FPS (${avgFps.toFixed(1)}) → reducing particle count ${this.config.particleCount} → ${newCount}`);
+            this.config.particleCount = newCount;
+            this.generateTargetGeometry();
+            this.initializeParticles();
+        }
     }
 
     onWindowResize() {

@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
 import cc.quandel.dashvoice.util.AppLog as Log
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -34,20 +35,36 @@ class ParticleAssistantController(private val webView: WebView) {
     }
 
     fun resetScene() {
-        Log.i("ParticleController", "Scene reset → ASSEMBLING")
+        Log.i("ParticleController", "Screensaver state → ASSEMBLING (scene reset)")
         stateMachine.transitionTo(ParticleState.ASSEMBLING)
-        executeJS("window.particleScene?.reset();")
-        executeJS("window.particleScene?.startAssembly();")
+        // reset() rebuilds particles at fresh spawn positions, setState('ASSEMBLING') starts the
+        // flow-to-target animation. Also harmless as a no-op if the page hasn't finished loading yet —
+        // the page's own bootstrap script (particle-screensaver.html) independently starts in
+        // ASSEMBLING on every fresh load, so this call is redundant-but-safe rather than load-bearing.
+        executeJS("window.particleScene?.reset(); window.particleScene?.setState('ASSEMBLING');")
+        setTranscript(null)
+        setResponse(null)
     }
 
     fun transitionTo(state: ParticleState) {
         if (!stateMachine.transitionTo(state)) return
+        Log.i("ParticleController", "Assistant state → ${state.name}")
         executeJS("window.particleScene?.setState('${state.name}');")
     }
 
     fun setAudioLevel(level: Float) {
         audioLevel.set(level.coerceIn(0f, 1f))
         executeJS("window.particleScene?.setAudioLevel($level);")
+    }
+
+    /** Zeigt/versteckt das Transkript-Overlay in der Partikel-Szene. null/leer = ausblenden. */
+    fun setTranscript(text: String?) {
+        executeJS("window.setTranscript?.(${JSONObject.quote(text ?: "")});")
+    }
+
+    /** Zeigt/versteckt das Antwort-Overlay in der Partikel-Szene. null/leer = ausblenden. */
+    fun setResponse(text: String?) {
+        executeJS("window.setResponse?.(${JSONObject.quote(text ?: "")});")
     }
 
     fun getState(): ParticleState = stateMachine.getState()

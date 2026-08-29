@@ -182,6 +182,26 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_USE_HOMEINTENT, false)
         set(v) = sp.edit().putBoolean(KEY_USE_HOMEINTENT, v).apply()
 
+    /** Zeigt das Sprach-Transkript als Overlay im Partikel-Screensaver. */
+    var particleShowTranscript: Boolean
+        get() = sp.getBoolean(KEY_PARTICLE_SHOW_TRANSCRIPT, true)
+        set(v) = sp.edit().putBoolean(KEY_PARTICLE_SHOW_TRANSCRIPT, v).apply()
+
+    /** Zeigt die Assistenten-Antwort als Overlay im Partikel-Screensaver. */
+    var particleShowResponse: Boolean
+        get() = sp.getBoolean(KEY_PARTICLE_SHOW_RESPONSE, true)
+        set(v) = sp.edit().putBoolean(KEY_PARTICLE_SHOW_RESPONSE, v).apply()
+
+    /** Assembly-Animation (Zusammensetzen aus Chaos) an/aus. Aus = Figur erscheint sofort fertig. */
+    var particleAssemblyAnimEnabled: Boolean
+        get() = sp.getBoolean(KEY_PARTICLE_ASSEMBLY_ANIM, true)
+        set(v) = sp.edit().putBoolean(KEY_PARTICLE_ASSEMBLY_ANIM, v).apply()
+
+    /** Geschwindigkeitsfaktor der Partikel-Animation (0.5–2.0×, 1.0 = normal). */
+    var particleAnimationSpeed: Float
+        get() = sp.getFloat(KEY_PARTICLE_ANIM_SPEED, 1.0f)
+        set(v) = sp.edit().putFloat(KEY_PARTICLE_ANIM_SPEED, v).apply()
+
     companion object {
         const val DEFAULT_URL = "https://ha.quandel-home.cc"
         const val DEFAULT_PORT = 10700
@@ -225,5 +245,9 @@ class Prefs(context: Context) {
         private const val KEY_PARTICLE_QUALITY = "particle_quality"
         private const val KEY_CONVERSATION_ID = "conversation_id"
         private const val KEY_USE_HOMEINTENT = "use_homeintent"
+        private const val KEY_PARTICLE_SHOW_TRANSCRIPT = "particle_show_transcript"
+        private const val KEY_PARTICLE_SHOW_RESPONSE = "particle_show_response"
+        private const val KEY_PARTICLE_ASSEMBLY_ANIM = "particle_assembly_anim"
+        private const val KEY_PARTICLE_ANIM_SPEED = "particle_anim_speed"
     }
 }

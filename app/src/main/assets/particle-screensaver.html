@@ -13,24 +13,67 @@
             color: #0f0; font-family: monospace; font-size: 12px;
             opacity: 0.5; pointer-events: none;
         }
+        .assistantText {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            max-width: 82%;
+            text-align: center;
+            color: #7fd9ff;
+            font-family: sans-serif;
+            font-size: 20px;
+            line-height: 1.4;
+            text-shadow: 0 0 8px rgba(127, 217, 255, 0.8);
+            pointer-events: none;
+            display: none;
+        }
+        #transcriptOverlay { bottom: 20%; opacity: 0.8; font-size: 17px; }
+        #responseOverlay { bottom: 11%; }
     </style>
 </head>
 <body>
     <canvas id="canvas"></canvas>
     <div id="debugInfo"></div>
+    <div id="transcriptOverlay" class="assistantText"></div>
+    <div id="responseOverlay" class="assistantText"></div>
 
-    <!-- Three.js library (included inline or local) -->
+    <!-- Three.js library, vendored locally (no CDN at runtime) -->
     <script src="js/three.min.js"></script>
 
     <!-- Particle Scene Logic -->
     <script src="js/particle-scene.js"></script>
 
     <script>
-        // Initialize particle scene when page loads
+        // Transcript/response overlay bridge, called from Kotlin via evaluateJavascript.
+        window.setTranscript = function (text) {
+            const el = document.getElementById('transcriptOverlay');
+            if (!el) return;
+            if (text) { el.textContent = text; el.style.display = 'block'; }
+            else { el.style.display = 'none'; }
+        };
+        window.setResponse = function (text) {
+            const el = document.getElementById('responseOverlay');
+            if (!el) return;
+            if (text) { el.textContent = text; el.style.display = 'block'; }
+            else { el.style.display = 'none'; }
+        };
+
+        // Initialize particle scene when page loads. Config comes from the URL query string
+        // (set by MainActivity on every loadUrl) so it's available deterministically before
+        // the scene is constructed — no race with evaluateJavascript() timing.
         window.addEventListener('DOMContentLoaded', () => {
             const canvas = document.getElementById('canvas');
+            const params = new URLSearchParams(location.search);
             window.particleScene = new ParticleScene(canvas);
+            window.particleScene.configure({
+                quality: params.get('quality') || 'AUTO',
+                animationSpeedMultiplier: parseFloat(params.get('speed')) || 1.0,
+                assemblyEnabled: params.get('assembly') !== '0',
+            });
             window.particleScene.start();
+            // Every fresh load starts from scattered chaos and assembles — this does not depend
+            // on the Kotlin-side resetScene() call landing before or after page load.
+            window.particleScene.setState('ASSEMBLING');
         });
 
         // Stop animation when page is hidden (tab/app backgrounded)

@@ -286,6 +286,12 @@ class VoiceService : Service(), WyomingServer.Listener {
         val cmds = CommandParser.parse(text, prefs.commandVerbs, entities?.names ?: emptyList(), prefs.fuzzyThreshold)
         if (cmds != null) {
             val conv = HaConversation(prefs.dashboardUrl, prefs.haToken)
+            // HomeIntent ist die zentrale NLU-Instanz, wenn aktiviert — der lokale Vosk-Layer bleibt nur
+            // fürs schnelle Fuzzy-Matching auf Gerätenamen, das eigentliche Verständnis liegt bei HA/HomeIntent.
+            val agentId = if (prefs.useHomeIntent) "conversation.ha_nlu" else "conversation.home_assistant"
+            // Follow-up-Turn → gespeicherte conversation_id mitsenden, sonst neue Session (kein Context-Leck
+            // zwischen unabhängigen Befehlen).
+            val convId = if (followUpActive) prefs.conversationId.ifBlank { null } else null
             var ok = 0
             for (c in cmds) {
                 Log.i(TAG, "lokaler Befehl: \"$c\"")
@@ -296,7 +302,13 @@ class VoiceService : Service(), WyomingServer.Listener {
                     Log.i(TAG, "Script-Direktaufruf: $scriptId")
                     conv.runScript(scriptId)
                 } else {
-                    conv.process(c)
+                    Log.i(TAG, "HomeIntent conversation started (agent=$agentId, followUp=$followUpActive)")
+                    val r = conv.process(c, conversationId = convId, agentId = agentId)
+                    if (r != null) {
+                        Log.i(TAG, "HomeIntent response received (ok=${r.ok})")
+                        if (r.conversationId.isNotBlank()) prefs.conversationId = r.conversationId
+                    }
+                    r
                 }
                 if (res != null && res.ok) ok++
             }

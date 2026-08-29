@@ -311,6 +311,79 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp" />
 
+        <!-- ── KI-Partikel-Screensaver ── -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp"
+            android:background="#33000000" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="KI-Partikel-Screensaver"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <CheckBox
+            android:id="@+id/particleEnabled"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Partikel-Screensaver aktiv (statt Brain-Graph/Uhr)" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Partikel-Qualität" />
+        <Spinner
+            android:id="@+id/particleQuality"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" />
+
+        <CheckBox
+            android:id="@+id/particleAssemblyAnim"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Zusammensetz-Animation beim Start zeigen" />
+
+        <TextView
+            android:id="@+id/particleSpeedLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Animationsgeschwindigkeit: 1.0×" />
+        <SeekBar
+            android:id="@+id/particleSpeed"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="150"
+            android:progress="50" />
+
+        <CheckBox
+            android:id="@+id/particleShowTranscript"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Transkript im Screensaver anzeigen" />
+
+        <CheckBox
+            android:id="@+id/particleShowResponse"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Antwort im Screensaver anzeigen" />
+
+        <CheckBox
+            android:id="@+id/useHomeIntent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="HomeIntent als Conversation Agent verwenden (Sofortbefehle)" />
+
         <!-- ── Standard-Launcher ── -->
         <View
             android:layout_width="match_parent"

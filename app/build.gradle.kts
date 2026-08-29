@@ -37,6 +37,14 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests {
+            // Android-Stubs (Log, Handler, Looper …) geben Defaultwerte statt "Stub!"-Exception —
+            // AppLog nutzt android.util.Log/Handler und läuft sonst in reinen JVM-Unittests nicht.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
@@ -46,4 +54,6 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.1")
     // On-Device-Spracherkennung für Sofort-Befehle (offline, an Whisper vorbei)
     implementation("com.alphacephei:vosk-android:0.3.47")
+
+    testImplementation("junit:junit:4.13.2")
 }
