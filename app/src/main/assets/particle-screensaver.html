@@ -10,11 +10,21 @@
         #referenceVisual {
             display: none;
         }
-        #canvas {
+        #referenceVisual.emergencyFallback {
+            display: block; position: fixed; inset: 0;
+            width: 100%; height: 100%; object-fit: contain;
+            animation: emergencyBreathe 3.5s ease-in-out infinite;
+        }
+        @keyframes emergencyBreathe {
+            0%, 100% { transform: scale(0.99); filter: brightness(0.85); }
+            50% { transform: scale(1.012); filter: brightness(1.18); }
+        }
+        #canvas, #fallbackCanvas {
             position: relative; z-index: 1;
             display: block; width: 100%; height: 100%;
             opacity: 1;
         }
+        #fallbackCanvas { display: none; position: fixed; inset: 0; }
         #debugInfo {
             position: absolute; top: 10px; left: 10px;
             color: #0f0; font-family: monospace; font-size: 12px;
@@ -41,6 +51,7 @@
 <body>
     <img id="referenceVisual" src="images/particle-humanoid-reference.jpg?v=2" alt="">
     <canvas id="canvas"></canvas>
+    <canvas id="fallbackCanvas"></canvas>
     <div id="debugInfo"></div>
     <div id="transcriptOverlay" class="assistantText"></div>
     <div id="responseOverlay" class="assistantText"></div>
@@ -50,6 +61,7 @@
 
     <!-- Particle Scene Logic -->
     <script src="js/particle-scene.js"></script>
+    <script src="js/particle-canvas-scene.js"></script>
 
     <script>
         // Transcript/response overlay bridge, called from Kotlin via evaluateJavascript.
@@ -71,6 +83,7 @@
         // the scene is constructed — no race with evaluateJavascript() timing.
         window.addEventListener('DOMContentLoaded', async () => {
             const canvas = document.getElementById('canvas');
+            const fallbackCanvas = document.getElementById('fallbackCanvas');
             const referenceVisual = document.getElementById('referenceVisual');
             const referenceReady = await new Promise(resolve => {
                 if (referenceVisual.complete) {
@@ -88,22 +101,32 @@
                 }, { once: true });
             });
             const params = new URLSearchParams(location.search);
-            window.particleScene = new ParticleScene(canvas);
-            if (referenceReady) {
+            const renderer = params.get('renderer') || 'webgl';
+            try {
+                if (!referenceReady) throw new Error('Particle reference image failed to load');
+                if (renderer === 'canvas') {
+                    canvas.style.display = 'none';
+                    fallbackCanvas.style.display = 'block';
+                    window.particleScene = new CanvasParticleScene(fallbackCanvas);
+                } else {
+                    window.particleScene = new ParticleScene(canvas);
+                }
                 window.particleScene.setReferenceImage(referenceVisual);
-            } else {
-                console.error('Particle reference image failed to load; using WebGL fallback');
+                window.particleScene.configure({
+                    quality: params.get('quality') || 'AUTO',
+                    animationSpeedMultiplier: parseFloat(params.get('speed')) || 1.0,
+                    assemblyEnabled: params.get('assembly') !== '0',
+                    debug: params.get('debug') === '1',
+                });
+                window.particleScene.start();
+                window.particleScene.setState('ASSEMBLING');
+            } catch (error) {
+                // A visible, gently animated last resort is preferable to a black kiosk screen.
+                console.error(`Particle renderer failed: ${error?.stack || error}`);
+                canvas.style.display = 'none';
+                fallbackCanvas.style.display = 'none';
+                referenceVisual.classList.add('emergencyFallback');
             }
-            window.particleScene.configure({
-                quality: params.get('quality') || 'AUTO',
-                animationSpeedMultiplier: parseFloat(params.get('speed')) || 1.0,
-                assemblyEnabled: params.get('assembly') !== '0',
-                debug: params.get('debug') === '1',
-            });
-            window.particleScene.start();
-            // Every fresh load starts from scattered chaos and assembles — this does not depend
-            // on the Kotlin-side resetScene() call landing before or after page load.
-            window.particleScene.setState('ASSEMBLING');
         });
 
         // Stop animation when page is hidden (tab/app backgrounded)

@@ -632,6 +632,9 @@ class MainActivity : AppCompatActivity() {
         if (prefs.enableParticleScreensaver && !showClock) {
             // Partikel-KI-Screensaver
             clockBlock.visibility = View.GONE
+            // Force the 2D particle canvas onto the CPU. On the MatePad, a lost Chromium GPU
+            // context otherwise leaves the whole WebView black and never recovers.
+            saverWebView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
             saverWebView.visibility = View.VISIBLE
             saverWebView.onResume()
 
@@ -640,7 +643,10 @@ class MainActivity : AppCompatActivity() {
             val assetUrl = "file:///android_asset/particle-screensaver.html" +
                 "?quality=${prefs.particleQuality}" +
                 "&speed=${prefs.particleAnimationSpeed}" +
-                "&assembly=${if (prefs.particleAssemblyAnimEnabled) "1" else "0"}"
+                "&assembly=${if (prefs.particleAssemblyAnimEnabled) "1" else "0"}" +
+                // Android WebView on this tablet can lose its WebGL context and stay black.
+                // The Canvas renderer animates the same image-sampled particles without WebGL.
+                "&renderer=canvas"
             AppLog.i("Saver", "Lade Partikel-Screensaver: $assetUrl")
             saverWebView.loadUrl(assetUrl)
 
@@ -650,6 +656,7 @@ class MainActivity : AppCompatActivity() {
         } else if (brainUrl.isNotEmpty() && !showClock) {
             // Brain-Graph-Modus: Live-3D-Graph in Vollbild, normale Helligkeit (soll sichtbar sein).
             clockBlock.visibility = View.GONE
+            saverWebView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             saverWebView.visibility = View.VISIBLE
             saverWebView.onResume()
             val saverUrl = withGesturesParam(
