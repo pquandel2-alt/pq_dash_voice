@@ -58,13 +58,14 @@ const REGION_WINDOW = {
 // sphere — width/depth now genuinely depend on height, giving a skull → temple → cheekbone →
 // jaw → chin taper instead of a ball.
 const HEAD_PROFILE = [
-    { h: 1.00, rx: 0.10, rz: 0.18 }, // rounded crown
-    { h: 0.82, rx: 0.62, rz: 0.62 },
-    { h: 0.48, rx: 0.92, rz: 0.88 }, // forehead
-    { h: 0.05, rx: 1.00, rz: 1.00 }, // widest face band
-    { h: -0.40, rx: 0.86, rz: 0.82 },
-    { h: -0.76, rx: 0.54, rz: 0.56 }, // jaw
-    { h: -1.00, rx: 0.12, rz: 0.22 }, // rounded chin
+    { h: 1.00, rx: 0.24, rz: 0.30 },
+    { h: 0.86, rx: 0.66, rz: 0.68 },
+    { h: 0.58, rx: 0.91, rz: 0.92 },
+    { h: 0.15, rx: 1.00, rz: 1.00 },
+    { h: -0.30, rx: 0.92, rz: 0.90 },
+    { h: -0.67, rx: 0.70, rz: 0.70 },
+    { h: -0.90, rx: 0.40, rz: 0.43 },
+    { h: -1.00, rx: 0.20, rz: 0.28 },
 ];
 
 function headProfileAt(h) {
@@ -90,12 +91,12 @@ function easeInOutCubic(t) {
 // flow lines. Face core: warm amber/orange. Chest core: cyan-white. Ambient: darker blue-cyan.
 function colorCyanStructure() {
     const c = new THREE.Color();
-    c.setHSL(0.54 + (Math.random() - 0.5) * 0.05, 0.70 + Math.random() * 0.18, 0.50 + Math.random() * 0.14);
+    c.setHSL(0.54 + (Math.random() - 0.5) * 0.035, 0.84 + Math.random() * 0.14, 0.43 + Math.random() * 0.12);
     return c;
 }
 function colorFlow() {
     const c = new THREE.Color();
-    c.setHSL(0.52 + (Math.random() - 0.5) * 0.04, 0.45 + Math.random() * 0.2, 0.68 + Math.random() * 0.18);
+    c.setHSL(0.52 + (Math.random() - 0.5) * 0.025, 0.82 + Math.random() * 0.16, 0.50 + Math.random() * 0.12);
     return c;
 }
 function colorFaceCore(intensity = Math.random()) {
@@ -110,13 +111,12 @@ function colorNeckEnergy() {
 }
 function colorChestCore() {
     const c = new THREE.Color();
-    const white = Math.random() < 0.4;
-    c.setHSL(white ? 0.55 : 0.51, white ? 0.15 : 0.5, white ? 0.82 + Math.random() * 0.12 : 0.6 + Math.random() * 0.15);
+    c.setHSL(0.52 + (Math.random() - 0.5) * 0.025, 0.78 + Math.random() * 0.18, 0.60 + Math.random() * 0.16);
     return c;
 }
 function colorAmbient() {
     const c = new THREE.Color();
-    c.setHSL(0.57 + (Math.random() - 0.5) * 0.06, 0.55 + Math.random() * 0.15, 0.22 + Math.random() * 0.14);
+    c.setHSL(0.55 + (Math.random() - 0.5) * 0.06, 0.68 + Math.random() * 0.20, 0.30 + Math.random() * 0.18);
     return c;
 }
 
@@ -136,6 +136,7 @@ uniform float uHeadEnergy;
 uniform float uFaceCoreEnergy;
 uniform float uChestCoreEnergy;
 uniform float uAudioLevel;
+uniform float uGlowPass;
 
 varying vec3 vColor;
 varying float vAlpha;
@@ -171,6 +172,15 @@ void main() {
     }
 
     alpha *= 0.75 + 0.25 * uAudioLevel;
+    if (uGlowPass > 0.5) {
+        float glowScale = vRegion == 9.0 ? 1.8 : (vRegion == 7.0 || vRegion == 8.0 ? 2.8 : 2.5);
+        size *= glowScale;
+        float glowAlpha = 0.055;
+        if (vRegion == 0.0 || vRegion == 3.0 || vRegion == 4.0) glowAlpha = 0.095;
+        if (vRegion == 7.0 || vRegion == 8.0) glowAlpha = 0.085;
+        if (vRegion == 9.0) glowAlpha = 0.040;
+        alpha *= glowAlpha;
+    }
     vColor = aColor;
     vAlpha = clamp(alpha, 0.0, 1.0);
 
@@ -182,6 +192,7 @@ void main() {
 
 const FRAGMENT_SHADER = `
 uniform float uErrorFlash;
+uniform float uGlowPass;
 varying vec3 vColor;
 varying float vAlpha;
 varying float vRegion;
@@ -189,6 +200,12 @@ varying float vRegion;
 void main() {
     vec2 uv = gl_PointCoord - vec2(0.5);
     float d = length(uv) * 2.0;
+    if (uGlowPass > 0.5) {
+        float halo = exp(-d * d * 2.8) * vAlpha;
+        if (halo < 0.008) discard;
+        gl_FragColor = vec4(vColor, halo);
+        return;
+    }
     float core = smoothstep(1.0, 0.0, d);
     float hot = smoothstep(0.35, 0.0, d) * 0.55;
     float alpha = core * vAlpha;
@@ -252,6 +269,7 @@ class ParticleScene {
         this.meta = null; // [region, pathT, noiseSeed] per particle
         this.particleGeometry = null;
         this.particleSystem = null;
+        this.glowSystem = null;
         this.layout = null; // anatomical constants from computeLayout()
 
         this.config = {
@@ -387,12 +405,12 @@ class ParticleScene {
      */
     computeLayout() {
         const s = this.config.headRadius / 80;
-        const chestTopY = 40 * s;
-        const chestBottomY = -70 * s;
-        const neckBottomY = chestTopY;
-        const neckTopY = 95 * s;
-        const headHalfHeight = 82 * s;
-        const headBottomY = neckTopY + 8 * s; // slight overlap into the neck, no gap
+        const chestTopY = 32 * s;
+        const chestBottomY = -88 * s;
+        const neckBottomY = 28 * s;
+        const neckTopY = 102 * s;
+        const headHalfHeight = 78 * s;
+        const headBottomY = neckTopY - 2 * s;
         const headCenterY = headBottomY + headHalfHeight;
         const headTopY = headCenterY + headHalfHeight;
         const shoulderCenterY = chestTopY;
@@ -401,26 +419,26 @@ class ParticleScene {
             s,
             headCenterY,
             headHalfHeight,
-            headHalfWidthMax: 55 * s,
-            headHalfDepthMax: 50 * s,
+            headHalfWidthMax: 62 * s,
+            headHalfDepthMax: 52 * s,
             headTopY,
             headBottomY,
             neckTopY,
             neckBottomY,
-            neckHalfWidth: 22 * s,
+            neckHalfWidth: 25 * s,
             neckHalfDepth: 20 * s,
             shoulderCenterY,
-            shoulderReachX: 160 * s,
-            shoulderDropY: 45 * s,
+            shoulderReachX: 190 * s,
+            shoulderDropY: 38 * s,
             chestTopY,
             chestBottomY,
             chestHalfWidthTop: 150 * s,
             chestHalfWidthBottom: 90 * s,
             chestHalfDepth: 55 * s,
-            chestCoreY: chestTopY - 20 * s,
-            chestCoreZ: 40 * s,
-            faceCoreY: headCenterY + headHalfHeight * 0.12,
-            faceCoreZ: headProfileAt(0.12).rz * 50 * s * 0.55,
+            chestCoreY: -5 * s,
+            chestCoreZ: 48 * s,
+            faceCoreY: headCenterY - headHalfHeight * 0.08,
+            faceCoreZ: 53 * s,
         };
     }
 
@@ -429,7 +447,7 @@ class ParticleScene {
         const L = this.layout;
         const figureHeight = L.headTopY - L.chestBottomY;
         const figureCenterY = (L.headTopY + L.chestBottomY) / 2;
-        const fillFraction = 0.80;
+        const fillFraction = 0.82;
         const fovRad = THREE.MathUtils.degToRad(this.camera.fov);
         const distance = figureHeight / (2 * Math.tan(fovRad / 2) * fillFraction);
         this.camera.position.set(0, figureCenterY, THREE.MathUtils.clamp(distance, 260, 1400));
@@ -445,17 +463,17 @@ class ParticleScene {
         const budget = this.config.particleCount;
         const pts = [];
 
-        const faceCoreBudget = Math.round(budget * 0.09);
-        const chestCoreBudget = Math.round(budget * 0.008);
+        const faceCoreBudget = Math.round(budget * 0.075);
+        const chestCoreBudget = Math.round(budget * 0.004);
         const coreBudget = faceCoreBudget + chestCoreBudget;
         const remaining = budget - coreBudget;
-        const structuralBudget = Math.round(remaining * 0.66);
-        const flowBudget = Math.round(remaining * 0.27);
+        const structuralBudget = Math.round(remaining * 0.56);
+        const flowBudget = Math.round(remaining * 0.29);
         const ambientBudget = remaining - structuralBudget - flowBudget;
 
-        const headBudget = Math.round(structuralBudget * 0.43);
-        const neckBudget = Math.round(structuralBudget * 0.11);
-        const shoulderBudget = Math.round(structuralBudget * 0.22);
+        const headBudget = Math.round(structuralBudget * 0.45);
+        const neckBudget = Math.round(structuralBudget * 0.10);
+        const shoulderBudget = Math.round(structuralBudget * 0.20);
         const chestBudget = structuralBudget - headBudget - neckBudget - shoulderBudget;
 
         this.genHeadSurface(pts, headBudget, L);
@@ -465,7 +483,7 @@ class ParticleScene {
         this.genChest(pts, chestBudget, L);
         this.genFlowPaths(pts, flowBudget, L);
         this.genFaceCore(pts, faceCoreBudget, L);
-        this.genVolumetricCluster(pts, chestCoreBudget, REGION.CHEST_CORE, 0, L.chestCoreY, L.chestCoreZ, 9 * L.s, 12 * L.s, 7 * L.s, colorChestCore, 3.0);
+        this.genVolumetricCluster(pts, chestCoreBudget, REGION.CHEST_CORE, 0, L.chestCoreY, L.chestCoreZ, 4 * L.s, 6 * L.s, 3 * L.s, colorChestCore, 3.0);
         this.genAmbient(pts, ambientBudget, L);
 
         // Pad/trim to the exact configured budget (rounding remainders only).
@@ -479,7 +497,7 @@ class ParticleScene {
     genHeadSurface(pts, budget, L) {
         // Stacked camera-facing scan lines keep the faceless oval readable instead of
         // turning it into a transparent wireframe globe.
-        const haloBudget = Math.round(budget * 0.16);
+        const haloBudget = Math.round(budget * 0.20);
         const bandBudget = budget - haloBudget;
         const rings = Math.max(26, Math.round(Math.sqrt(bandBudget * 0.55)));
         const segments = Math.max(20, Math.round(bandBudget / rings));
@@ -492,7 +510,10 @@ class ParticleScene {
                 const xNorm = (j / (segments - 1)) * 2 - 1;
                 const x = xNorm * prof.rx * L.headHalfWidthMax;
                 const z = Math.sqrt(Math.max(0, 1 - xNorm * xNorm)) * prof.rz * L.headHalfDepthMax;
-                pts.push({ x, y, z, region: REGION.HEAD, color: colorCyanStructure(), size: 1.8 * L.s, pathT: -1 });
+                const color = colorCyanStructure();
+                // Keep the cyan scan lines visible across the warm core without bleaching it.
+                if (Math.abs(h + 0.08) < 0.58 && Math.abs(xNorm) < 0.72) color.multiplyScalar(0.42);
+                pts.push({ x, y, z, region: REGION.HEAD, color, size: 1.65 * L.s, pathT: -1 });
             }
         }
 
@@ -504,14 +525,15 @@ class ParticleScene {
                 for (let i = 0; i < Math.floor(perPass / 2); i++) {
                     const h = 1 - 2 * (i / (Math.floor(perPass / 2) - 1));
                     const prof = headProfileAt(h);
-                    const spread = (pass - (passes - 1) / 2) * 1.35 * L.s;
+                    const passDistance = Math.abs(pass - (passes - 1) / 2);
+                    const spread = (pass - (passes - 1) / 2) * 1.05 * L.s;
                     pts.push({
                         x: side * (prof.rx * L.headHalfWidthMax + spread),
                         y: L.headCenterY + h * L.headHalfHeight,
-                        z: 4 * L.s + pass * 0.4 * L.s,
+                        z: 14 * L.s + pass * 0.35 * L.s,
                         region: REGION.HEAD,
                         color: colorFlow(),
-                        size: 2.7 * L.s,
+                        size: (2.9 - passDistance * 0.18) * L.s,
                         pathT: -1,
                     });
                 }
@@ -521,10 +543,11 @@ class ParticleScene {
 
     /** Large warm energy field made from horizontal contour strands; no facial features. */
     genFaceCore(pts, budget, L) {
-        const rings = 30;
-        const perRing = Math.max(14, Math.floor(budget / rings));
-        const halfH = 43 * L.s;
-        const halfW = 34 * L.s;
+        const rings = 34;
+        const lineBudget = Math.round(budget * 0.68);
+        const perRing = Math.max(12, Math.floor(lineBudget / rings));
+        const halfH = 35 * L.s;
+        const halfW = 35 * L.s;
         for (let row = 0; row < rings; row++) {
             const h = 1 - (row / (rings - 1)) * 2;
             const rowWidth = halfW * Math.sqrt(Math.max(0, 1 - h * h));
@@ -536,13 +559,31 @@ class ParticleScene {
                 pts.push({
                     x: xNorm * rowWidth,
                     y: y + Math.sin(xNorm * Math.PI) * 1.4 * L.s,
-                    z: 46 * L.s + radial * 3 * L.s,
+                    z: L.faceCoreZ + radial * 2 * L.s,
                     region: REGION.FACE_CORE,
                     color: colorFaceCore(intensity),
-                    size: (2.4 + intensity * 1.45) * L.s,
+                    size: (1.75 + intensity * 0.75) * L.s,
                     pathT: row / (rings - 1),
                 });
             }
+        }
+        const cloudBudget = Math.max(0, budget - rings * perRing - 2);
+        this.genVolumetricCluster(
+            pts, cloudBudget, REGION.FACE_CORE,
+            0, L.faceCoreY, L.faceCoreZ - 2 * L.s,
+            28 * L.s, 30 * L.s, 5 * L.s,
+            colorFaceCore, 2.2 * L.s
+        );
+        for (const size of [40, 26]) {
+            pts.push({
+                x: 0,
+                y: L.faceCoreY,
+                z: L.faceCoreZ + 5 * L.s,
+                region: REGION.FACE_CORE,
+                color: colorFaceCore(0.72),
+                size: size * L.s,
+                pathT: 0.5,
+            });
         }
     }
 
@@ -627,107 +668,138 @@ class ParticleScene {
     }
 
     genNeck(pts, budget, L) {
-        const strands = 18;
+        const strands = 16;
         const perStrand = Math.max(8, Math.round(budget / strands));
         for (let strand = 0; strand < strands; strand++) {
             const xNorm = (strand / (strands - 1)) * 2 - 1;
-            for (let i = 0; i < perStrand; i++) {
-                const t = i / (perStrand - 1);
-                const waist = 1.18 - 0.28 * Math.sin(t * Math.PI);
-                const warm = Math.abs(xNorm) < 0.62;
+            const absX = Math.abs(xNorm);
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(xNorm * 14 * L.s, L.neckTopY + 3 * L.s, 42 * L.s),
+                new THREE.Vector3(xNorm * (16 + absX * 5) * L.s, L.neckTopY - 35 * L.s, 38 * L.s),
+                new THREE.Vector3(xNorm * (22 + absX * 8) * L.s, L.neckBottomY + 13 * L.s, 43 * L.s),
+                new THREE.Vector3(xNorm * (34 + absX * 8) * L.s, L.neckBottomY, 44 * L.s),
+            ]);
+            const sampled = curve.getSpacedPoints(perStrand - 1);
+            sampled.forEach((p, i) => {
+                const warm = absX < 0.26;
                 pts.push({
-                    x: xNorm * L.neckHalfWidth * waist + Math.sin(t * Math.PI * 2 + xNorm) * 2.2 * L.s,
-                    y: L.neckBottomY + t * (L.neckTopY - L.neckBottomY),
-                    z: L.neckHalfDepth * (0.75 + 0.18 * Math.cos(xNorm * Math.PI)),
+                    x: p.x + Math.sin(i * 0.24 + xNorm * 2) * 0.8 * L.s,
+                    y: p.y + Math.sin(strand * 1.71 + i * 0.31) * 1.1 * L.s,
+                    z: p.z,
                     region: REGION.NECK,
                     color: warm ? colorNeckEnergy() : colorCyanStructure(),
-                    size: (warm ? 2.0 : 1.65) * L.s,
-                    pathT: t,
+                    size: (warm ? 1.45 : 1.85) * L.s,
+                    pathT: i / (perStrand - 1),
                 });
-            }
+            });
         }
     }
 
     genShoulder(pts, budget, L, side) {
         const region = side < 0 ? REGION.SHOULDER_L : REGION.SHOULDER_R;
-        const layers = 8;
+        const layers = 7;
         const perLayer = Math.max(12, Math.round(budget / layers));
         for (let layer = 0; layer < layers; layer++) {
             const depth = layer / (layers - 1);
-            for (let i = 0; i < perLayer; i++) {
-                const t = i / (perLayer - 1);
+            const offset = (depth - 0.5) * 8 * L.s;
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(side * 18 * L.s, L.headBottomY - 9 * L.s + offset, 38 * L.s),
+                new THREE.Vector3(side * 34 * L.s, L.neckTopY - 35 * L.s + offset, 42 * L.s),
+                new THREE.Vector3(side * 82 * L.s, L.shoulderCenterY + 26 * L.s + offset, 36 * L.s),
+                new THREE.Vector3(side * 145 * L.s, L.shoulderCenterY + 11 * L.s + offset, 22 * L.s),
+                new THREE.Vector3(side * L.shoulderReachX, L.shoulderCenterY - 12 * L.s + offset * 0.35, 7 * L.s),
+            ]);
+            const sampled = curve.getSpacedPoints(perLayer - 1);
+            sampled.forEach((p, i) => {
                 pts.push({
-                    x: side * (L.neckHalfWidth + (L.shoulderReachX - L.neckHalfWidth) * Math.sin(t * Math.PI / 2)),
-                    y: L.shoulderCenterY + (18 - depth * 36) * L.s - L.shoulderDropY * (1 - Math.cos(t * Math.PI / 2)),
-                    z: (34 - depth * 52) * L.s,
+                    x: p.x,
+                    y: p.y,
+                    z: p.z,
                     region,
                     color: colorCyanStructure(),
-                    size: (layer === 0 ? 2.4 : 1.7) * L.s,
-                    pathT: t,
+                    size: (layer === 0 || layer === layers - 1 ? 2.7 : 1.8) * L.s,
+                    pathT: i / (perLayer - 1),
                 });
-            }
+            });
         }
     }
 
     genChest(pts, budget, L) {
-        const contours = 30;
-        const perContour = Math.max(16, Math.floor(budget / contours));
-        for (let row = 0; row < contours; row++) {
-            const down = row / (contours - 1);
-            const halfW = (145 - down * 78) * L.s;
-            const baseY = L.chestTopY - (18 + down * 88) * L.s;
-            const stagger = (row % 2) * 0.5;
-            for (let i = 0; i < perContour; i++) {
-                const xn = (((i + stagger) / perContour) * 2 - 1);
-                const shoulderLift = Math.pow(Math.abs(xn), 1.55) * (22 - down * 8) * L.s;
-                pts.push({
-                    x: xn * halfW,
-                    y: baseY + shoulderLift,
-                    z: (21 + Math.sqrt(Math.max(0, 1 - xn * xn)) * 27 - down * 8) * L.s,
+        const fansPerSide = 23;
+        const perFan = Math.max(12, Math.floor(budget / (fansPerSide * 2)));
+        for (const side of [-1, 1]) {
+            for (let lane = 0; lane < fansPerSide; lane++) {
+                const n = lane / (fansPerSide - 1);
+                const curve = new THREE.CatmullRomCurve3([
+                    new THREE.Vector3(side * (1 + n * 58) * L.s, L.chestBottomY, 18 * L.s),
+                    new THREE.Vector3(side * (2 + n * 44) * L.s, L.chestCoreY - 38 * L.s, 35 * L.s),
+                    new THREE.Vector3(side * (10 + n * 32) * L.s, L.chestCoreY - 2 * L.s, 47 * L.s),
+                    new THREE.Vector3(side * (62 + n * 112) * L.s, L.shoulderCenterY - (2 + n * 22) * L.s, 24 * L.s),
+                ]);
+                const phase = (lane * 0.37) % 1;
+                const sampled = [];
+                for (let i = 0; i < perFan; i++) {
+                    sampled.push(curve.getPointAt(Math.min(1, (i + phase) / (perFan - 1))));
+                }
+                sampled.forEach((p, i) => pts.push({
+                    x: p.x + Math.sin(lane * 1.9 + i * 0.7) * 0.28 * L.s,
+                    y: p.y + Math.cos(lane * 1.4 + i * 0.6) * 0.28 * L.s,
+                    z: p.z,
                     region: REGION.CHEST,
-                    color: colorCyanStructure(),
-                    size: 1.7 * L.s,
-                    pathT: i / (perContour - 1),
-                });
+                    color: colorFlow(),
+                    size: (1.90 + (1 - n) * 0.45) * L.s,
+                    pathT: i / (perFan - 1),
+                }));
             }
         }
     }
 
+    addFlowPath(pts, keypoints, count, L, colorFn = colorFlow, size = 1.9) {
+        const curve = new THREE.CatmullRomCurve3(keypoints.map(p => new THREE.Vector3(p[0], p[1], p[2])));
+        const sampled = curve.getSpacedPoints(Math.max(2, count - 1));
+        sampled.forEach((p, i) => {
+            pts.push({
+                x: p.x,
+                y: p.y,
+                z: p.z,
+                region: REGION.FLOW,
+                color: colorFn(),
+                size: size * L.s,
+                pathT: i / Math.max(1, sampled.length - 1),
+                });
+        });
+    }
+
     genFlowPaths(pts, budget, L) {
         const s = L.s;
-        const paths = [];
+        const pathSpecs = [];
         for (const side of [-1, 1]) {
-            for (let lane = 0; lane < 5; lane++) {
-                const offset = lane * 3.2 * s;
-                paths.push([
-                    [side * offset, L.headCenterY + L.headHalfHeight * 0.68, 45 * s],
-                    [side * (24 + lane * 3) * s, L.headCenterY + L.headHalfHeight * 0.30, 46 * s],
-                    [side * (42 + lane * 2) * s, L.headCenterY - L.headHalfHeight * 0.10, 38 * s],
-                    [side * (18 + lane) * s, L.neckTopY, 22 * s],
-                    [side * (8 + lane) * s, (L.neckTopY + L.neckBottomY) / 2, 20 * s],
-                ]);
-                paths.push([
-                    [side * (5 + lane * 4) * s, L.chestCoreY, L.chestCoreZ + 3 * s],
-                    [side * (50 + lane * 8) * s, L.shoulderCenterY + (8 - lane * 3) * s, 35 * s],
-                    [side * L.shoulderReachX * (0.60 + lane * 0.06), L.shoulderCenterY - L.shoulderDropY * (0.35 + lane * 0.09), 22 * s],
-                    [side * L.shoulderReachX * 0.96, L.shoulderCenterY - L.shoulderDropY * 0.95, 10 * s],
-                ]);
+            // Luminous filaments sweep down the face and converge into the warm neck.
+            for (let lane = 0; lane < 4; lane++) {
+                pathSpecs.push({ points: [
+                    [side * (5 + lane * 4) * s, L.headCenterY + L.headHalfHeight * 0.62, 55 * s],
+                    [side * (28 + lane * 5) * s, L.headCenterY + L.headHalfHeight * 0.16, 56 * s],
+                    [side * (48 + lane * 2) * s, L.headCenterY - L.headHalfHeight * 0.30, 44 * s],
+                    [side * (20 + lane) * s, L.neckTopY - 10 * s, 40 * s],
+                    [side * (6 + lane * 2) * s, L.chestCoreY + 4 * s, L.chestCoreZ],
+                ], color: lane < 2 ? colorNeckEnergy : colorFlow, size: lane < 2 ? 2.1 : 1.9 });
+            }
+
+            // Cyan shoulder streams radiate from the chest light and reinforce the silhouette.
+            for (let lane = 0; lane < 8; lane++) {
+                const n = lane / 7;
+                pathSpecs.push({ points: [
+                    [side * (3 + lane * 2) * s, L.chestCoreY, L.chestCoreZ + 2 * s],
+                    [side * (32 + lane * 5) * s, L.chestCoreY + (18 + lane * 2) * s, 45 * s],
+                    [side * (90 + lane * 8) * s, L.shoulderCenterY + (10 - lane * 2) * s, 31 * s],
+                    [side * (155 + n * 30) * s, L.shoulderCenterY - (8 + lane * 3) * s, 12 * s],
+                ], color: colorFlow, size: lane === 0 ? 2.5 : 1.8 });
             }
         }
 
-        const perPath = Math.max(6, Math.round(budget / paths.length));
-        for (const keypoints of paths) {
-            const curve = new THREE.CatmullRomCurve3(keypoints.map(p => new THREE.Vector3(p[0], p[1], p[2])));
-            const sampled = curve.getSpacedPoints(perPath - 1);
-            sampled.forEach((p, idx) => {
-                pts.push({
-                    x: p.x, y: p.y, z: p.z,
-                    region: REGION.FLOW,
-                    color: colorFlow(),
-                    size: 1.7 * s,
-                    pathT: idx / (perPath - 1),
-                });
-            });
+        const perPath = Math.max(8, Math.round(budget / pathSpecs.length));
+        for (const spec of pathSpecs) {
+            this.addFlowPath(pts, spec.points, perPath, L, spec.color, spec.size);
         }
     }
 
@@ -747,17 +819,48 @@ class ParticleScene {
 
     genAmbient(pts, budget, L) {
         const s = L.s;
-        const cx = 0, cy = (L.headTopY + L.chestBottomY) / 2;
-        for (let i = 0; i < budget; i++) {
-            const dir = new THREE.Vector3(Math.random() - 0.5, (Math.random() - 0.5) * 1.3, Math.random() - 0.5).normalize();
-            const r = 0.55 + Math.random() * 0.55; // mostly outside the figure's own volume
+        const waveBudget = Math.round(budget * 0.52);
+        const scatterBudget = budget - waveBudget;
+        const waveCount = 8;
+        const perWave = Math.max(8, Math.floor(waveBudget / waveCount));
+
+        for (const side of [-1, 1]) {
+            for (let lane = 0; lane < waveCount / 2; lane++) {
+                for (let i = 0; i < perWave; i++) {
+                    const t = i / (perWave - 1);
+                    const x = side * (92 + t * 205) * s;
+                    const y = (L.headCenterY + 8 * s) - t * 105 * s +
+                        Math.sin(t * Math.PI * (2.4 + lane * 0.18) + lane * 0.8) * (8 + lane * 2) * s;
+                    pts.push({
+                        x: x + (Math.random() - 0.5) * 5 * s,
+                        y: y + (Math.random() - 0.5) * 5 * s,
+                        z: (-15 + Math.random() * 22) * s,
+                        region: REGION.AMBIENT,
+                        color: colorAmbient(),
+                        size: (1.4 + Math.random() * 1.1) * s,
+                        pathT: t,
+                    });
+                }
+            }
+        }
+
+        for (let i = 0; i < scatterBudget; i++) {
+            const crownParticle = Math.random() < 0.62;
+            const angle = Math.random() * Math.PI * 2;
+            const radius = Math.pow(Math.random(), 0.72);
+            const x = crownParticle
+                ? Math.cos(angle) * radius * 95 * s
+                : (Math.random() - 0.5) * 430 * s;
+            const y = crownParticle
+                ? L.headTopY + (Math.random() * 105 - 18) * s
+                : L.shoulderCenterY + (Math.random() - 0.15) * 115 * s;
             pts.push({
-                x: cx + dir.x * 230 * s * r,
-                y: cy + dir.y * 220 * s * r,
-                z: dir.z * 170 * s * r,
+                x,
+                y,
+                z: (Math.random() - 0.5) * 100 * s,
                 region: REGION.AMBIENT,
                 color: colorAmbient(),
-                size: 1.4 * s,
+                size: (1.0 + Math.random() * 1.7) * s,
                 pathT: -1,
             });
         }
@@ -770,6 +873,10 @@ class ParticleScene {
             this.scene.remove(this.particleSystem);
             this.particleSystem.geometry.dispose();
             this.particleSystem.material.dispose();
+        }
+        if (this.glowSystem) {
+            this.scene.remove(this.glowSystem);
+            this.glowSystem.material.dispose();
         }
 
         const n = this.targetPoints.length;
@@ -825,7 +932,23 @@ class ParticleScene {
             uChestCoreEnergy: { value: 0.35 },
             uAudioLevel: { value: 0 },
             uErrorFlash: { value: 0 },
+            uGlowPass: { value: 0 },
         };
+
+        const glowUniforms = {
+            ...this.uniforms,
+            uGlowPass: { value: 1 },
+        };
+
+        const glowMaterial = new THREE.ShaderMaterial({
+            uniforms: glowUniforms,
+            vertexShader: VERTEX_SHADER,
+            fragmentShader: FRAGMENT_SHADER,
+            transparent: true,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
+        });
 
         const material = new THREE.ShaderMaterial({
             uniforms: this.uniforms,
@@ -836,7 +959,9 @@ class ParticleScene {
             blending: THREE.AdditiveBlending,
         });
 
+        this.glowSystem = new THREE.Points(geometry, glowMaterial);
         this.particleSystem = new THREE.Points(geometry, material);
+        this.scene.add(this.glowSystem);
         this.scene.add(this.particleSystem);
         this.log(`Initialized ${n} particles (holographic humanoid bust)`);
     }
@@ -902,6 +1027,7 @@ class ParticleScene {
         // Frontal view stays the primary view — only a very small organic sway, no
         // continuous spin (per design: this is a face-forward holographic bust).
         this.particleSystem.rotation.y = Math.sin(this.elapsedTime * 0.00015) * THREE.MathUtils.degToRad(3);
+        this.glowSystem.rotation.y = this.particleSystem.rotation.y;
     }
 
     /** Decays one-shot envelopes and eases the state-driven uniforms toward their targets. */
