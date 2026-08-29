@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.util.AttributeSet
 import android.view.View
+import cc.quandel.dashvoice.particle.ParticleAnimationClock
 import cc.quandel.dashvoice.particle.ParticleState
 import kotlin.math.PI
 import kotlin.math.cos
@@ -45,6 +46,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
     private var running = false
     private var assemblyEnabled = true
     private var assemblyStartedAt = 0L
+    private var animationStartedAt = 0L
     private var animationSpeed = 1f
     private var currentState = ParticleState.IDLE
     private var audioLevel = 0f
@@ -66,6 +68,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
         assemblyEnabled = assemble
         animationSpeed = speed.coerceIn(0.5f, 2f)
         running = true
+        animationStartedAt = System.currentTimeMillis()
         currentState = if (assemble) ParticleState.ASSEMBLING else ParticleState.IDLE
         resetAssembly()
         visibility = VISIBLE
@@ -183,7 +186,9 @@ class ParticleScreensaverView @JvmOverloads constructor(
         if (!running) return
 
         val now = System.currentTimeMillis()
-        val seconds = now / 1000f * animationSpeed
+        // Always calculate from a small elapsed duration. Converting Unix epoch milliseconds
+        // directly to Float loses sub-minute precision and freezes every sine-based movement.
+        val seconds = ParticleAnimationClock.elapsedSeconds(now, animationStartedAt, animationSpeed)
         if (particles.isEmpty()) {
             drawEmergencyAvatar(canvas, seconds)
             postInvalidateDelayed(33L)
