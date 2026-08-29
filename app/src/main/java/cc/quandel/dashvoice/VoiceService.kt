@@ -658,8 +658,25 @@ class VoiceService : Service(), WyomingServer.Listener {
             capture = AudioCapture(gain = prefs.micGain, noiseSuppression = captureNoiseSuppression)
             capture.start { frame -> onAudioFrame(frame) }
         }
+        // Sofortbefehle live umschalten: aus → local=null zwingt onWakeDetected() auf die HA-Wyoming-Pipeline;
+        // an → LocalRecognizer im Hintergrund laden, falls noch nicht geschehen (gleiche Logik wie onCreate()).
+        if (!prefs.instantCommandsEnabled) {
+            local = null
+        } else if (local == null) {
+            Thread {
+                val r = try { LocalRecognizer(this) } catch (e: Throwable) {
+                    Log.w(TAG, "LocalRecognizer init: ${e.message}"); null
+                }
+                local = r?.takeIf { it.available }
+                val ent = HaEntities(prefs.dashboardUrl, prefs.haToken)
+                ent.refresh()
+                entities = ent
+                Log.i(TAG, "On-Device-Befehle: ${if (local != null) "aktiv" else "aus"}, Geräte: ${ent.names.size}")
+            }.start()
+        }
         Log.i(TAG, "Einstellungen live übernommen: threshold=${prefs.wakeThreshold} " +
-            "gain=${prefs.micGain} ns=${prefs.noiseSuppressionEnabled}")
+            "gain=${prefs.micGain} ns=${prefs.noiseSuppressionEnabled} " +
+            "sofortbefehle=${prefs.instantCommandsEnabled}")
     }
 
     companion object {

@@ -384,6 +384,20 @@
             android:layout_marginTop="12dp"
             android:text="HomeIntent als Conversation Agent verwenden (Sofortbefehle)" />
 
+        <CheckBox
+            android:id="@+id/instantCommandsEnabled"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Sofortbefehle (lokale Spracherkennung auf dem Tablet)" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="#88000000"
+            android:text="Deaktivieren, um jedes Kommando ausschließlich über die Home-Assistant-Wyoming-Pipeline (HA-STT, HA-Conversation-Agent, HA-TTS) laufen zu lassen — ohne Vosk-Erkennung auf dem Gerät." />
+
         <!-- ── Standard-Launcher ── -->
         <View
             android:layout_width="match_parent"

@@ -166,6 +166,8 @@ class SettingsActivity : AppCompatActivity() {
         particleShowResponse.isChecked = prefs.particleShowResponse
         val useHomeIntent = findViewById<CheckBox>(R.id.useHomeIntent)
         useHomeIntent.isChecked = prefs.useHomeIntent
+        val instantCommandsEnabled = findViewById<CheckBox>(R.id.instantCommandsEnabled)
+        instantCommandsEnabled.isChecked = prefs.instantCommandsEnabled
 
         // ── default launcher button ──
         findViewById<Button>(R.id.setDefaultLauncher).setOnClickListener {
@@ -207,6 +209,7 @@ class SettingsActivity : AppCompatActivity() {
             prefs.particleShowTranscript = particleShowTranscript.isChecked
             prefs.particleShowResponse = particleShowResponse.isChecked
             prefs.useHomeIntent       = useHomeIntent.isChecked
+            prefs.instantCommandsEnabled = instantCommandsEnabled.isChecked
             // Audio-Einstellungen (Empfindlichkeit/Gain/NS) sofort an den laufenden Dienst übergeben.
             VoiceService.applySettings(this)
             Toast.makeText(this, "Gespeichert – Audio sofort aktiv", Toast.LENGTH_SHORT).show()
