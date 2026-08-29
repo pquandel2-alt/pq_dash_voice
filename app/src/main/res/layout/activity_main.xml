@@ -106,6 +106,13 @@
             android:layout_height="match_parent"
             android:visibility="gone" />
 
+        <!-- Native particle renderer: independent of WebView, JavaScript and WebGL. -->
+        <cc.quandel.dashvoice.ParticleScreensaverView
+            android:id="@+id/particleScreensaverView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
         <!-- Klassischer Uhr-Screensaver (Fallback, wenn keine Graph-URL gesetzt) -->
         <LinearLayout
             android:id="@+id/clockBlock"

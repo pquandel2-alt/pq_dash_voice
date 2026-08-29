@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var screensaver: View
     private lateinit var saverWebView: WebView
+    private lateinit var particleScreensaverView: ParticleScreensaverView
     private lateinit var clockBlock: View
     private lateinit var clock: TextView
     private lateinit var screensaverDate: TextView
@@ -167,6 +168,7 @@ class MainActivity : AppCompatActivity() {
         webView             = findViewById(R.id.webview)
         screensaver         = findViewById(R.id.screensaver)
         saverWebView        = findViewById(R.id.saverWebView)
+        particleScreensaverView = findViewById(R.id.particleScreensaverView)
         clockBlock          = findViewById(R.id.clockBlock)
         clock               = findViewById(R.id.clock)
         screensaverDate     = findViewById(R.id.screensaverDate)
@@ -367,6 +369,9 @@ class MainActivity : AppCompatActivity() {
 
             if (screensaverActive && prefs.enableParticleScreensaver) {
                 // Screensaver aktiv → Partikel als Voice-UI verwenden
+                particleScreensaverView.setParticleState(
+                    cc.quandel.dashvoice.particle.ParticleState.LISTENING
+                )
                 particleController?.transitionTo(
                     cc.quandel.dashvoice.particle.ParticleState.LISTENING
                 )
@@ -391,6 +396,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         VoiceEvents.onTranscript = { text ->
+            particleScreensaverView.setParticleState(
+                cc.quandel.dashvoice.particle.ParticleState.THINKING
+            )
             particleController?.transitionTo(
                 cc.quandel.dashvoice.particle.ParticleState.THINKING
             )
@@ -404,6 +412,9 @@ class MainActivity : AppCompatActivity() {
             voiceAnimation.setState(VoiceAnimationView.State.THINKING)
         }
         VoiceEvents.onResponse = { text ->
+            particleScreensaverView.setParticleState(
+                cc.quandel.dashvoice.particle.ParticleState.SPEAKING
+            )
             particleController?.transitionTo(
                 cc.quandel.dashvoice.particle.ParticleState.SPEAKING
             )
@@ -416,11 +427,15 @@ class MainActivity : AppCompatActivity() {
             voiceAnimation.setState(VoiceAnimationView.State.SPEAKING)
         }
         VoiceEvents.onTtsLevel = { level ->
+            particleScreensaverView.setAudioLevel(level)
             particleController?.setAudioLevel(level)
             voiceAnimation.setMouthLevel(level)
         }
         VoiceEvents.onCommandDone = { _ ->
             // Sofortbefehl ausgeführt: grüne „Erledigt"-Animation kurz zeigen, dann ausblenden (stumm).
+            particleScreensaverView.setParticleState(
+                cc.quandel.dashvoice.particle.ParticleState.SUCCESS
+            )
             particleController?.transitionTo(
                 cc.quandel.dashvoice.particle.ParticleState.SUCCESS
             )
@@ -489,6 +504,9 @@ class MainActivity : AppCompatActivity() {
             resetScreensaverTimer()
         }
         VoiceEvents.onIdle = {
+            particleScreensaverView.setParticleState(
+                cc.quandel.dashvoice.particle.ParticleState.IDLE
+            )
             particleController?.transitionTo(
                 cc.quandel.dashvoice.particle.ParticleState.IDLE
             )
@@ -630,32 +648,19 @@ class MainActivity : AppCompatActivity() {
         // den Partikel-Screensaver in den Settings explizit deaktiviert (particleEnabled = false).
         // Kein gleichzeitiger Betrieb beider Modi (eine WebView, ein Screensaver-Slot).
         if (prefs.enableParticleScreensaver && !showClock) {
-            // Partikel-KI-Screensaver
+            // Native Partikel-KI: kein WebView-/Chromium-/WebGL-Pfad mehr.
             clockBlock.visibility = View.GONE
-            // Force the 2D particle canvas onto the CPU. On the MatePad, a lost Chromium GPU
-            // context otherwise leaves the whole WebView black and never recovers.
-            saverWebView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-            saverWebView.visibility = View.VISIBLE
-            saverWebView.onResume()
-
-            // Laden der lokalen HTML-Datei mit Partikel-Szene. Konfiguration per Query-String,
-            // damit sie deterministisch beim Laden verfügbar ist (kein Race mit evaluateJavascript()).
-            val assetUrl = "file:///android_asset/particle-screensaver.html" +
-                "?quality=${prefs.particleQuality}" +
-                "&speed=${prefs.particleAnimationSpeed}" +
-                "&assembly=${if (prefs.particleAssemblyAnimEnabled) "1" else "0"}" +
-                // Android WebView on this tablet can lose its WebGL context and stay black.
-                // The Canvas renderer animates the same image-sampled particles without WebGL.
-                "&renderer=canvas"
-            AppLog.i("Saver", "Lade Partikel-Screensaver: $assetUrl")
-            saverWebView.loadUrl(assetUrl)
-
-            // Partikel-Scene initialisieren und starten
-            particleController?.resetScene()
+            saverWebView.visibility = View.GONE
+            particleScreensaverView.start(
+                prefs.particleAssemblyAnimEnabled,
+                prefs.particleAnimationSpeed,
+            )
+            AppLog.i("Saver", "Native Partikel-Szene gestartet")
             lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         } else if (brainUrl.isNotEmpty() && !showClock) {
             // Brain-Graph-Modus: Live-3D-Graph in Vollbild, normale Helligkeit (soll sichtbar sein).
             clockBlock.visibility = View.GONE
+            particleScreensaverView.stop()
             saverWebView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             saverWebView.visibility = View.VISIBLE
             saverWebView.onResume()
@@ -671,6 +676,7 @@ class MainActivity : AppCompatActivity() {
             lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         } else {
             // Uhr-Modus: Uhr + Datum + Sensoren, Bildschirm auf ~3% dimmen.
+            particleScreensaverView.stop()
             saverWebView.visibility = View.GONE
             clockBlock.visibility = View.VISIBLE
             val now = Date()
@@ -693,6 +699,7 @@ class MainActivity : AppCompatActivity() {
         sensorFetcher?.stop()
         sensorFetcher = null
         particleController?.pause()
+        particleScreensaverView.stop()
 
         screensaver.animate().alpha(0f).setDuration(400).withEndAction {
             screensaver.visibility = View.GONE
