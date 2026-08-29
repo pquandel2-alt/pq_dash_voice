@@ -108,11 +108,36 @@ class ParticleScreensaverView @JvmOverloads constructor(
     private fun buildParticles(viewWidth: Int, viewHeight: Int): List<Particle> {
         val result = ArrayList<Particle>(PARTICLE_COUNT)
         val centerX = viewWidth * 0.5f
-        val headCenterY = viewHeight * 0.34f
-        val headRadiusX = viewHeight * 0.145f
-        val headRadiusY = viewHeight * 0.255f
-        val chinY = headCenterY + headRadiusY * 0.92f
-        val shoulderY = viewHeight * 0.69f
+        val headCenterY = viewHeight * 0.325f
+        val headRadiusX = viewHeight * 0.142f
+        val headRadiusY = viewHeight * 0.205f
+        val chinY = headCenterY + headRadiusY
+        val neckBaseY = viewHeight * 0.645f
+        val shoulderOuterY = viewHeight * 0.735f
+
+        // Half-width of a human-like head from crown (-1) to chin (+1). Unlike an ellipse,
+        // this gives us a small crown, temples/cheekbones, jaw and narrow chin.
+        fun headHalfWidth(vertical: Float): Float {
+            val stops = arrayOf(
+                -1.00f to 0.18f,
+                -0.82f to 0.68f,
+                -0.52f to 0.96f,
+                -0.10f to 1.00f,
+                0.30f to 0.92f,
+                0.60f to 0.72f,
+                0.84f to 0.43f,
+                1.00f to 0.16f,
+            )
+            for (index in 0 until stops.lastIndex) {
+                val (fromY, fromWidth) = stops[index]
+                val (toY, toWidth) = stops[index + 1]
+                if (vertical in fromY..toY) {
+                    val t = (vertical - fromY) / (toY - fromY)
+                    return headRadiusX * (fromWidth + (toWidth - fromWidth) * t)
+                }
+            }
+            return headRadiusX * 0.16f
+        }
 
         fun cyan(brightness: Float): Int = Color.rgb(
             (8 + brightness * 32).toInt().coerceIn(0, 255),
@@ -133,48 +158,47 @@ class ParticleScreensaverView @JvmOverloads constructor(
             )
         }
 
-        // Horizontal holographic scan-lines form an original tapered, faceless head.
-        for (line in 0 until 39) {
-            val vertical = -1f + line / 38f * 2f
-            val profile = sqrt(max(0f, 1f - vertical * vertical))
-            val jawTaper = when {
-                vertical < -0.55f -> 0.70f + (vertical + 1f) * 0.55f
-                vertical > 0.72f -> 0.82f
-                else -> 1f
-            }
-            val halfWidth = headRadiusX * profile * jawTaper
-            val count = (22 + profile * 34).toInt()
+        // Fewer, clearly separated scan-lines keep the head translucent instead of egg-shaped.
+        for (line in 0 until 27) {
+            val vertical = -1f + line / 26f * 2f
+            val halfWidth = headHalfWidth(vertical)
+            val profile = (halfWidth / headRadiusX).coerceIn(0f, 1f)
+            val count = (16 + profile * 28).toInt()
             val y = headCenterY + vertical * headRadiusY
             for (point in 0 until count) {
                 val across = if (count <= 1) 0.5f else point / (count - 1f)
                 val x = centerX - halfWidth + halfWidth * 2f * across
                 val wave = sin(across * PI.toFloat() * 2f + line * 0.32f) * 1.5f
-                val brightness = 0.55f + profile * 0.34f + random.nextFloat() * 0.11f
-                add(x, y + wave, cyan(brightness), brightness, 1.25f)
+                val edge = kotlin.math.abs(across - 0.5f) * 2f
+                val brightness = 0.38f + profile * 0.19f + edge * 0.22f + random.nextFloat() * 0.09f
+                add(x, y + wave, cyan(brightness), brightness, 1.05f)
             }
         }
 
-        // Multiple electric outlines give the head a luminous shell rather than a photo edge.
-        for (shell in 0 until 3) {
-            val shellScale = 1f + shell * 0.035f
-            for (point in 0 until 180) {
-                val angle = point / 180f * (PI * 2).toFloat()
-                val topTaper = 0.93f + 0.07f * sin(angle)
-                add(
-                    centerX + cos(angle) * headRadiusX * shellScale * topTaper,
-                    headCenterY + sin(angle) * headRadiusY * shellScale,
-                    cyan(0.92f),
-                    0.86f + random.nextFloat() * 0.14f,
-                    1.7f,
-                )
+        // Bright profile-following shells define the silhouette without filling it solidly.
+        for (shell in 0 until 5) {
+            val shellOffset = shell * viewHeight * 0.0028f
+            for (point in 0 until 92) {
+                val vertical = -1f + point / 91f * 2f
+                val y = headCenterY + vertical * (headRadiusY + shellOffset)
+                val halfWidth = headHalfWidth(vertical) + shellOffset
+                for (side in listOf(-1f, 1f)) {
+                    add(
+                        centerX + side * halfWidth,
+                        y,
+                        cyan(0.98f),
+                        0.88f + random.nextFloat() * 0.12f,
+                        1.65f,
+                    )
+                }
             }
         }
 
         // Independent warm energy field floating inside the otherwise faceless head.
-        val faceCenterY = headCenterY + headRadiusY * 0.08f
-        for (ring in 0 until 16) {
-            val ringRadius = (ring + 1f) / 16f
-            val points = 18 + ring
+        val faceCenterY = headCenterY + headRadiusY * 0.12f
+        for (ring in 0 until 20) {
+            val ringRadius = (ring + 1f) / 20f
+            val points = 20 + ring
             for (point in 0 until points) {
                 val angle = point / points.toFloat() * (PI * 2).toFloat() + ring * 0.19f
                 val shimmer = 0.92f + random.nextFloat() * 0.16f
@@ -182,8 +206,8 @@ class ParticleScreensaverView @JvmOverloads constructor(
                 val green = (105 + (1f - ringRadius) * 105).toInt()
                 val blue = (8 + (1f - ringRadius) * 48).toInt()
                 add(
-                    centerX + cos(angle) * headRadiusX * 0.60f * ringRadius * shimmer,
-                    faceCenterY + sin(angle) * headRadiusY * 0.39f * ringRadius * shimmer,
+                    centerX + cos(angle) * headRadiusX * 0.70f * ringRadius * shimmer,
+                    faceCenterY + sin(angle) * headRadiusY * 0.50f * ringRadius * shimmer,
                     Color.rgb(red, green, blue),
                     0.72f + (1f - ringRadius) * 0.28f,
                     1.65f + (1f - ringRadius) * 0.55f,
@@ -192,16 +216,16 @@ class ParticleScreensaverView @JvmOverloads constructor(
         }
 
         // Gold/cyan streams connect the head to the chest like living neural fibres.
-        for (stream in -5..5) {
-            val streamPosition = stream / 5f
-            for (point in 0 until 35) {
-                val t = point / 34f
-                val spread = viewHeight * (0.018f + t * 0.058f)
-                val curve = sin(t * PI.toFloat()) * sin(stream * 1.7f) * viewWidth * 0.008f
+        for (stream in -7..7) {
+            val streamPosition = stream / 7f
+            for (point in 0 until 38) {
+                val t = point / 37f
+                val spread = viewHeight * (0.014f + t * 0.072f)
+                val curve = sin(t * PI.toFloat()) * sin(stream * 1.35f) * viewWidth * 0.006f
                 val gold = kotlin.math.abs(stream) <= 2
                 add(
                     centerX + streamPosition * spread + curve,
-                    chinY + (shoulderY - chinY) * t,
+                    chinY + (neckBaseY - chinY) * t,
                     if (gold) Color.rgb(240, 176, 70) else cyan(0.78f),
                     if (gold) 0.88f else 0.70f,
                     1.35f,
@@ -209,39 +233,56 @@ class ParticleScreensaverView @JvmOverloads constructor(
             }
         }
 
-        // Layered shoulder arcs flow outward from the neck.
-        val shoulderHalfWidth = viewWidth * 0.37f
+        // Anatomical shoulder contours slope down from the neck instead of forming flat wings.
+        val shoulderHalfWidth = viewWidth * 0.355f
+        val neckHalfWidth = viewHeight * 0.068f
         for (side in listOf(-1f, 1f)) {
-            for (layer in 0 until 10) {
-                for (point in 0 until 30) {
-                    val t = point / 29f
-                    val x = centerX + side * (viewHeight * 0.045f + shoulderHalfWidth * t)
-                    val arch = sin(t * PI.toFloat()) * viewHeight * (0.085f - layer * 0.0045f)
-                    val y = shoulderY - arch + layer * viewHeight * 0.006f
-                    val brightness = 0.48f + (1f - layer / 10f) * 0.35f
-                    add(x, y, cyan(brightness), brightness, 1.3f)
+            for (layer in 0 until 12) {
+                for (point in 0 until 34) {
+                    val t = point / 33f
+                    val x = centerX + side * (neckHalfWidth + (shoulderHalfWidth - neckHalfWidth) * t)
+                    val naturalDrop = (shoulderOuterY - neckBaseY) * t.pow(1.35f)
+                    val muscleCurve = sin(t * PI.toFloat()) * viewHeight * 0.022f
+                    val layerDrop = layer * viewHeight * 0.0048f * (0.35f + t * 0.65f)
+                    val y = neckBaseY + naturalDrop - muscleCurve + layerDrop
+                    val brightness = 0.44f + (1f - layer / 12f) * 0.37f
+                    add(x, y, cyan(brightness), brightness, 1.22f)
                 }
             }
         }
 
-        // Symmetrical chest energy curves converge into a bright lower core.
-        val chestBottomY = viewHeight * 0.91f
+        // Nested torso streams bend inward gradually and fade at different endpoints.
+        val chestBottomY = viewHeight * 0.925f
         for (side in listOf(-1f, 1f)) {
-            for (layer in 0 until 10) {
-                for (point in 0 until 35) {
-                    val t = point / 34f
-                    val startWidth = shoulderHalfWidth * (0.88f - layer * 0.055f)
-                    val x = centerX + side * startWidth * (1f - t).pow(1.35f)
-                    val y = shoulderY + (chestBottomY - shoulderY) * t +
-                        sin(t * PI.toFloat()) * layer * viewHeight * 0.0025f
-                    val brightness = 0.44f + (1f - t) * 0.30f
-                    add(x, y, cyan(brightness), brightness, 1.15f)
+            for (layer in 0 until 11) {
+                for (point in 0 until 34) {
+                    val t = point / 33f
+                    val startWidth = shoulderHalfWidth * (0.88f - layer * 0.045f)
+                    val endWidth = viewWidth * (0.035f + layer * 0.004f)
+                    val inward = t.pow(1.18f)
+                    val x = centerX + side * (startWidth + (endWidth - startWidth) * inward)
+                    val endpointY = chestBottomY - layer * viewHeight * 0.006f
+                    val y = shoulderOuterY + (endpointY - shoulderOuterY) * t +
+                        sin(t * PI.toFloat()) * viewHeight * 0.018f
+                    val brightness = 0.38f + (1f - t) * 0.34f
+                    add(x, y, cyan(brightness), brightness, 1.08f)
                 }
             }
         }
 
-        val chestCoreY = viewHeight * 0.775f
-        for (point in 0 until 220) {
+        // Fine central fibres keep the torso connected instead of ending in an empty V.
+        for (stream in -5..5) {
+            for (point in 0 until 28) {
+                val t = point / 27f
+                val x = centerX + stream * viewWidth * 0.006f * (1f - t * 0.55f) +
+                    sin(t * PI.toFloat() * 2f + stream) * viewWidth * 0.003f
+                val y = neckBaseY + (chestBottomY - neckBaseY) * t
+                add(x, y, if (kotlin.math.abs(stream) <= 1) Color.rgb(225, 177, 92) else cyan(0.65f), 0.62f, 1.05f)
+            }
+        }
+
+        val chestCoreY = viewHeight * 0.785f
+        for (point in 0 until 260) {
             val angle = random.nextFloat() * (PI * 2).toFloat()
             val radius = sqrt(random.nextFloat()) * viewHeight * 0.045f
             add(
@@ -253,12 +294,19 @@ class ParticleScreensaverView @JvmOverloads constructor(
             )
         }
 
-        // Remaining particles form a sparse, asymmetric living aura around the avatar.
+        // Remaining particles stay close to the crown and shoulders, not across the whole screen.
         while (result.size < PARTICLE_COUNT) {
-            val angle = random.nextFloat() * (PI * 2).toFloat()
-            val radius = viewHeight * (0.31f + random.nextFloat() * 0.28f)
-            val x = centerX + cos(angle) * radius * 1.35f
-            val y = headCenterY + sin(angle) * radius
+            val crownParticle = random.nextFloat() < 0.58f
+            val x = if (crownParticle) {
+                centerX + (random.nextFloat() - 0.5f) * headRadiusX * 2.5f
+            } else {
+                centerX + (random.nextFloat() - 0.5f) * shoulderHalfWidth * 2.35f
+            }
+            val y = if (crownParticle) {
+                headCenterY - headRadiusY - random.nextFloat().pow(1.7f) * viewHeight * 0.14f
+            } else {
+                shoulderOuterY + (random.nextFloat() - 0.7f) * viewHeight * 0.16f
+            }
             add(x, y, cyan(0.48f), 0.38f + random.nextFloat() * 0.32f, 0.9f)
         }
         return result
@@ -310,7 +358,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
             val red = Color.red(particle.color)
             val green = Color.green(particle.color)
             val blue = Color.blue(particle.color)
-            val warmCore = red > blue * 1.18f && red > green * 0.90f
+            val warmCore = normalizedY < 0.52f && red > blue * 1.18f && red > green * 0.90f
             if (warmCore) {
                 val faceCenterY = height * 0.38f
                 val corePulse = 1f + sin(seconds * 2.35f) * 0.032f
