@@ -47,16 +47,12 @@
             android:inputType="text" />
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Wake Word (Asset ohne .onnx)"
-            android:textStyle="bold" />
-        <EditText
-            android:id="@+id/wake"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:inputType="text" />
+            android:layout_marginTop="12dp"
+            android:text="Wake Word, Sprache-zu-Text, Conversation Agent und Sprachausgabe werden in Home Assistant beim Assist-Satelliten konfiguriert. Auf dem Tablet laufen keine lokalen Sprachmodelle mehr."
+            android:textColor="#88000000"
+            android:textSize="12sp" />
 
         <!-- ── Screensaver ── -->
         <View
@@ -279,20 +275,6 @@
             android:max="500"
             android:progress="0" />
 
-        <!-- Far-field: Wake-Empfindlichkeit. RECHTS = empfindlicher / weitere Reichweite. -->
-        <TextView
-            android:id="@+id/wakeThresholdLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Wake-Empfindlichkeit: 66% (Schwelle 0.40)" />
-        <SeekBar
-            android:id="@+id/wakeThreshold"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="60"
-            android:progress="40" />
-
         <CheckBox
             android:id="@+id/noiseSuppression"
             android:layout_width="wrap_content"
@@ -376,27 +358,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Antwort im Screensaver anzeigen" />
-
-        <CheckBox
-            android:id="@+id/useHomeIntent"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="HomeIntent als Conversation Agent verwenden (Sofortbefehle)" />
-
-        <CheckBox
-            android:id="@+id/instantCommandsEnabled"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="Sofortbefehle (lokale Spracherkennung auf dem Tablet)" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textSize="12sp"
-            android:textColor="#88000000"
-            android:text="Deaktivieren, um jedes Kommando ausschließlich über die Home-Assistant-Wyoming-Pipeline (HA-STT, HA-Conversation-Agent, HA-TTS) laufen zu lassen — ohne Vosk-Erkennung auf dem Gerät." />
 
         <!-- ── Standard-Launcher ── -->
         <View

@@ -311,10 +311,16 @@ class ParticleScene {
     }
 
     syncReferenceVisual() {
-        if (!this.referenceImage) return;
+        if (!this.referenceImage?.complete || this.referenceImage.naturalWidth <= 0) {
+            // Never hide the WebGL fallback when the asset failed to load in Android WebView.
+            this.canvas.style.opacity = '1';
+            return;
+        }
         const assembled = this.currentState !== 'ASSEMBLING';
         this.referenceImage.style.opacity = assembled ? '1' : '0';
-        this.canvas.style.opacity = assembled ? '0' : '1';
+        // Keep WebGL visible as a fallback underneath the opaque reference. Android WebView
+        // may retain an opaque hardware canvas even when CSS opacity is set to zero.
+        this.canvas.style.opacity = '1';
         // The exact reference already contains its own bloom. Rendering the duplicate
         // glow draw-call during assembly only doubles GPU load without improving fidelity.
         if (this.glowSystem) this.glowSystem.visible = false;

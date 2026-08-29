@@ -20,15 +20,6 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_NAME, DEFAULT_NAME) ?: DEFAULT_NAME
         set(v) = sp.edit().putString(KEY_NAME, v).apply()
 
-    var wakeWord: String
-        get() = sp.getString(KEY_WAKE, DEFAULT_WAKE) ?: DEFAULT_WAKE
-        set(v) = sp.edit().putString(KEY_WAKE, v).apply()
-
-    /** Far-field-Default 0.40 (niedriger = empfindlicher). UI-Regler rechts = empfindlicher. */
-    var wakeThreshold: Float
-        get() = sp.getFloat(KEY_THRESHOLD, 0.4f)
-        set(v) = sp.edit().putFloat(KEY_THRESHOLD, v).apply()
-
     /** Software-Mikrofon-Verstärkung (1.0–6.0) als Ersatz für fehlendes Hardware-AGC. 1.0 = unverändert. */
     var micGain: Float
         get() = sp.getFloat(KEY_MIC_GAIN, 1.0f)
@@ -111,37 +102,6 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_ANIMATION_STYLE, 6)   // Default: Gesicht/Blase
         set(v) = sp.edit().putInt(KEY_ANIMATION_STYLE, v).apply()
 
-    /** On-Device-Sofortbefehle (Vosk, an Whisper vorbei). */
-    var instantCommandsEnabled: Boolean
-        get() = sp.getBoolean(KEY_INSTANT_CMD, true)
-        set(v) = sp.edit().putBoolean(KEY_INSTANT_CMD, v).apply()
-
-    /** Befehls-Verben: enthält das Vosk-Transkript eines davon → lokaler Befehlspfad. Komma-getrennt. */
-    var commandVerbs: List<String>
-        get() = (sp.getString(KEY_CMD_VERBS, DEFAULT_CMD_VERBS) ?: DEFAULT_CMD_VERBS)
-            .split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
-        set(v) = sp.edit().putString(KEY_CMD_VERBS, v.joinToString(",")).apply()
-
-    /** Follow-up: nach einer Antwort kurz weiter zuhören (ohne erneutes „Ok Nabu"). */
-    var followUpEnabled: Boolean
-        get() = sp.getBoolean(KEY_FOLLOWUP, true)
-        set(v) = sp.edit().putBoolean(KEY_FOLLOWUP, v).apply()
-
-    /** Barge-in: laufende Sprachausgabe durch Sprechen unterbrechen. */
-    var bargeInEnabled: Boolean
-        get() = sp.getBoolean(KEY_BARGEIN, true)
-        set(v) = sp.edit().putBoolean(KEY_BARGEIN, v).apply()
-
-    /** Lokale Timer/Wecker auf dem Tablet. */
-    var timersEnabled: Boolean
-        get() = sp.getBoolean(KEY_TIMERS, true)
-        set(v) = sp.edit().putBoolean(KEY_TIMERS, v).apply()
-
-    /** Ähnlichkeits-Schwelle (0..1) für das Fuzzy-Matching auf echte Gerätenamen. */
-    var fuzzyThreshold: Float
-        get() = sp.getFloat(KEY_FUZZY, 0.55f)
-        set(v) = sp.edit().putFloat(KEY_FUZZY, v).apply()
-
     /** Ablaufzeitpunkt (epoch ms) des aktiven lokalen Timers; 0 = keiner. Für die Display-Anzeige. */
     var timerEndAt: Long
         get() = sp.getLong(KEY_TIMER_END, 0L)
@@ -172,16 +132,6 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_PARTICLE_QUALITY, "AUTO") ?: "AUTO"
         set(v) = sp.edit().putString(KEY_PARTICLE_QUALITY, v).apply()
 
-    /** Konversations-ID für HomeIntent Follow-ups. */
-    var conversationId: String
-        get() = sp.getString(KEY_CONVERSATION_ID, "") ?: ""
-        set(v) = sp.edit().putString(KEY_CONVERSATION_ID, v).apply()
-
-    /** HomeIntent als Conversation Agent verwenden (statt default). */
-    var useHomeIntent: Boolean
-        get() = sp.getBoolean(KEY_USE_HOMEINTENT, false)
-        set(v) = sp.edit().putBoolean(KEY_USE_HOMEINTENT, v).apply()
-
     /** Zeigt das Sprach-Transkript als Overlay im Partikel-Screensaver. */
     var particleShowTranscript: Boolean
         get() = sp.getBoolean(KEY_PARTICLE_SHOW_TRANSCRIPT, true)
@@ -206,18 +156,11 @@ class Prefs(context: Context) {
         const val DEFAULT_URL = "https://ha.quandel-home.cc"
         const val DEFAULT_PORT = 10700
         const val DEFAULT_NAME = "Wand-Tablet"
-        const val DEFAULT_WAKE = "ok_nabu"
         const val DEFAULT_SCREENSAVER_DELAY = 120_000L
-        // Befehls-Verben (de). Bewusst eher spezifisch, um Fragen nicht fälschlich als Befehl zu werten.
-        const val DEFAULT_CMD_VERBS =
-            "schalt,einschalt,ausschalt,mach an,mach aus,aktivier,deaktivier,starte,start ,stoppe,stopp," +
-            "dimm,öffne,schließe,fahr,runterfahren,hochfahren,herunterfahren,heize,stelle"
 
         private const val KEY_URL = "url"
         private const val KEY_PORT = "port"
         private const val KEY_NAME = "name"
-        private const val KEY_WAKE = "wake"
-        private const val KEY_THRESHOLD = "threshold"
         private const val KEY_MIC_GAIN = "mic_gain"
         private const val KEY_NOISE_SUPPRESSION = "noise_suppression"
         private const val KEY_SCREENSAVER_DELAY = "screensaver_delay"
@@ -231,20 +174,12 @@ class Prefs(context: Context) {
         private const val KEY_SAVER_GESTURES = "saver_gestures_enabled"
         private const val KEY_TTS_VOLUME = "tts_volume"
         private const val KEY_ANIMATION_STYLE = "animation_style"
-        private const val KEY_INSTANT_CMD = "instant_commands"
-        private const val KEY_CMD_VERBS = "command_verbs"
-        private const val KEY_FOLLOWUP = "followup_enabled"
-        private const val KEY_BARGEIN = "bargein_enabled"
-        private const val KEY_TIMERS = "timers_enabled"
-        private const val KEY_FUZZY = "fuzzy_threshold"
         private const val KEY_TIMER_END = "timer_end_at"
         private const val KEY_DOORBELL_ENTITY = "doorbell_entity"
         private const val KEY_DOORBELL_URL = "doorbell_url"
         private const val KEY_DOORBELL_DISMISS = "doorbell_dismiss"
         private const val KEY_PARTICLE_ENABLED = "particle_screensaver_enabled"
         private const val KEY_PARTICLE_QUALITY = "particle_quality"
-        private const val KEY_CONVERSATION_ID = "conversation_id"
-        private const val KEY_USE_HOMEINTENT = "use_homeintent"
         private const val KEY_PARTICLE_SHOW_TRANSCRIPT = "particle_show_transcript"
         private const val KEY_PARTICLE_SHOW_RESPONSE = "particle_show_response"
         private const val KEY_PARTICLE_ASSEMBLY_ANIM = "particle_assembly_anim"

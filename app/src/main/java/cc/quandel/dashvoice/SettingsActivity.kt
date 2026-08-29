@@ -36,12 +36,10 @@ class SettingsActivity : AppCompatActivity() {
         val url  = findViewById<EditText>(R.id.url)
         val port = findViewById<EditText>(R.id.port)
         val name = findViewById<EditText>(R.id.name)
-        val wake = findViewById<EditText>(R.id.wake)
 
         url.setText(prefs.dashboardUrl)
         port.setText(prefs.satellitePort.toString())
         name.setText(prefs.satelliteName)
-        wake.setText(prefs.wakeWord)
 
         // ── screensaver delay spinner ──
         val spinner = findViewById<Spinner>(R.id.screensaverDelay)
@@ -89,22 +87,6 @@ class SettingsActivity : AppCompatActivity() {
         micGainBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
                 micGainLabel.text = "Mikrofon-Verstärkung: ${"%.1f".format(progress / 100f + 1.0f)}×"
-            }
-            override fun onStartTrackingTouch(sb: SeekBar) {}
-            override fun onStopTrackingTouch(sb: SeekBar) {}
-        })
-
-        // ── Wake-Empfindlichkeit seekbar: progress 0..60, RECHTS = empfindlicher ──
-        // Anzeige = Empfindlichkeit in % (rechts=100%); intern invertiert auf wakeThreshold 0.80..0.20.
-        val wakeThLabel = findViewById<TextView>(R.id.wakeThresholdLabel)
-        val wakeThBar   = findViewById<SeekBar>(R.id.wakeThreshold)
-        fun wakeThLabelText(progress: Int) =
-            "Wake-Empfindlichkeit: ${progress * 100 / 60}% (Schwelle ${"%.2f".format(0.80f - progress / 100f)})"
-        wakeThBar.progress = ((0.80f - prefs.wakeThreshold) * 100f).toInt().coerceIn(0, 60)
-        wakeThLabel.text = wakeThLabelText(wakeThBar.progress)
-        wakeThBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
-                wakeThLabel.text = wakeThLabelText(progress)
             }
             override fun onStartTrackingTouch(sb: SeekBar) {}
             override fun onStopTrackingTouch(sb: SeekBar) {}
@@ -164,10 +146,6 @@ class SettingsActivity : AppCompatActivity() {
         particleShowTranscript.isChecked = prefs.particleShowTranscript
         val particleShowResponse = findViewById<CheckBox>(R.id.particleShowResponse)
         particleShowResponse.isChecked = prefs.particleShowResponse
-        val useHomeIntent = findViewById<CheckBox>(R.id.useHomeIntent)
-        useHomeIntent.isChecked = prefs.useHomeIntent
-        val instantCommandsEnabled = findViewById<CheckBox>(R.id.instantCommandsEnabled)
-        instantCommandsEnabled.isChecked = prefs.instantCommandsEnabled
 
         // ── default launcher button ──
         findViewById<Button>(R.id.setDefaultLauncher).setOnClickListener {
@@ -184,7 +162,6 @@ class SettingsActivity : AppCompatActivity() {
             prefs.dashboardUrl        = url.text.toString().trim()
             prefs.satellitePort       = port.text.toString().trim().toIntOrNull() ?: Prefs.DEFAULT_PORT
             prefs.satelliteName       = name.text.toString().trim()
-            prefs.wakeWord            = wake.text.toString().trim()
             prefs.screensaverDelayMs  = screensaverOptions[spinner.selectedItemPosition].second
             prefs.haToken             = haToken.text.toString().trim()
             prefs.screensaverSensors  = sensors.text.toString().trim()
@@ -199,7 +176,6 @@ class SettingsActivity : AppCompatActivity() {
             prefs.doorbellAutoDismissSec = doorbellDismiss.text.toString().trim().toIntOrNull() ?: 30
             prefs.ttsVolume           = volumeBar.progress
             prefs.micGain             = micGainBar.progress / 100f + 1.0f
-            prefs.wakeThreshold       = 0.80f - wakeThBar.progress / 100f
             prefs.noiseSuppressionEnabled = noiseSuppression.isChecked
             prefs.animationStyle      = animSpinner.selectedItemPosition
             prefs.enableParticleScreensaver = particleEnabled.isChecked
@@ -208,8 +184,6 @@ class SettingsActivity : AppCompatActivity() {
             prefs.particleAnimationSpeed = particleSpeedBar.progress / 100f + 0.5f
             prefs.particleShowTranscript = particleShowTranscript.isChecked
             prefs.particleShowResponse = particleShowResponse.isChecked
-            prefs.useHomeIntent       = useHomeIntent.isChecked
-            prefs.instantCommandsEnabled = instantCommandsEnabled.isChecked
             // Audio-Einstellungen (Empfindlichkeit/Gain/NS) sofort an den laufenden Dienst übergeben.
             VoiceService.applySettings(this)
             Toast.makeText(this, "Gespeichert – Audio sofort aktiv", Toast.LENGTH_SHORT).show()

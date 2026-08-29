@@ -1,7 +1,6 @@
 package cc.quandel.dashvoice.wyoming
 
 import cc.quandel.dashvoice.util.AppLog as Log
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.DataInputStream
 import java.io.OutputStream
@@ -13,17 +12,13 @@ import kotlin.concurrent.thread
  * Wyoming satellite endpoint. The satellite is a TCP **server**; Home Assistant's
  * "Wyoming Protocol" integration connects in (default port 10700).
  *
- * Behaviour follows rhasspy/wyoming-satellite's WakeStreamingSatellite: wake word is
- * detected locally, then the satellite drives the pipeline (run-pipeline + audio stream)
- * and plays back the TTS audio it receives.
- *
- * NOTE: exact event ordering (run-pipeline / detection / audio-start) and the Info fields
- * must be validated against a live HA instance (WP1/WP6) — see project plan.
+ * Behaviour follows rhasspy/wyoming-satellite's AlwaysStreamingSatellite: the microphone
+ * is streamed to Home Assistant, HA performs wake-word detection, and reports the selected
+ * Assist wake word back with a detection event.
  */
 class WyomingServer(
     private val port: Int,
     private val satelliteName: String,
-    private val wakeWord: String,
     private val listener: Listener
 ) {
     interface Listener {
@@ -31,6 +26,7 @@ class WyomingServer(
         fun onPauseSatellite()
         fun onClientConnected()
         fun onClientDisconnected()
+        fun onWakeDetected(name: String)
         fun onVoiceStopped()
         fun onTranscript(text: String)
         fun onSynthesize(text: String)
@@ -114,6 +110,8 @@ class WyomingServer(
                     "describe" -> sendInfo()
                     "run-satellite" -> listener.onRunSatellite()
                     "pause-satellite" -> listener.onPauseSatellite()
+                    "detect" -> { /* HA wake-word stage started */ }
+                    "detection" -> listener.onWakeDetected(ev.data?.optString("name") ?: "")
                     "voice-started" -> { /* logged above */ }
                     "voice-stopped" -> listener.onVoiceStopped()
                     "transcribe" -> { /* ASR stage marker */ }
@@ -152,34 +150,30 @@ class WyomingServer(
             .put("attribution", JSONObject().put("name", "DashVoice").put("url", ""))
             .put("installed", true)
             .put("has_vad", false)
-            .put("active_wake_words", JSONArray().put(wakeWord))
-            .put("max_active_wake_words", 1)
             .put("supports_trigger", true)
         val info = JSONObject()
-            .put("asr", JSONArray())
-            .put("tts", JSONArray())
-            .put("handle", JSONArray())
-            .put("intent", JSONArray())
-            .put("wake", JSONArray())
             .put("satellite", satellite)
         send(WyomingEvent("info", info))
     }
 
-    fun sendRunPipeline() {
+    /** HA performs wake-word detection and automatically restarts the pipeline after TTS. */
+    fun sendRunPipelineRemoteWake() {
+        val data = JSONObject()
+            .put("start_stage", "wake")
+            .put("end_stage", "tts")
+            .put("restart_on_end", true)
+            .put("snd_format", JSONObject().put("rate", 22050).put("width", 2).put("channels", 1))
+        send(WyomingEvent("run-pipeline", data))
+    }
+
+    /** Manual push-to-talk still uses HA for STT, intent handling and TTS. */
+    fun sendRunPipelineManual() {
         val data = JSONObject()
             .put("start_stage", "asr")
             .put("end_stage", "tts")
             .put("restart_on_end", false)
+            .put("snd_format", JSONObject().put("rate", 22050).put("width", 2).put("channels", 1))
         send(WyomingEvent("run-pipeline", data))
-    }
-
-    fun sendDetection(name: String) {
-        send(
-            WyomingEvent(
-                "detection",
-                JSONObject().put("name", name).put("timestamp", System.currentTimeMillis())
-            )
-        )
     }
 
     fun sendAudioStart(rate: Int = 16000, width: Int = 2, channels: Int = 1) {
@@ -207,10 +201,16 @@ class WyomingServer(
     fun stop() {
         running = false
         try {
+            clientSocket?.close()
+        } catch (_: Exception) {
+        }
+        try {
             serverSocket?.close()
         } catch (_: Exception) {
         }
         clientOut = null
+        clientSocket = null
+        serverSocket = null
         acceptThread = null
     }
 

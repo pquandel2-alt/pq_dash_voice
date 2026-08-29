@@ -11,8 +11,8 @@ android {
         applicationId = "cc.quandel.dashvoice"
         minSdk = 26
         targetSdk = 34
-        versionCode = 33
-        versionName = "2.8.4"
+        versionCode = 34
+        versionName = "2.8.5"
 
         // MatePad DBY-W09 is arm64; restrict to keep the APK small (ONNX libs are large).
         ndk {
@@ -51,9 +51,5 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.1")
-    // On-Device-Spracherkennung für Sofort-Befehle (offline, an Whisper vorbei)
-    implementation("com.alphacephei:vosk-android:0.3.47")
-
     testImplementation("junit:junit:4.13.2")
 }
