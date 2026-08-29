@@ -1,7 +1,6 @@
 package cc.quandel.dashvoice
 
 import android.content.Context
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -12,7 +11,6 @@ import cc.quandel.dashvoice.particle.ParticleState
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -106,76 +104,162 @@ class ParticleScreensaverView @JvmOverloads constructor(
         }
     }
 
+    /** Builds an original avatar from mathematical curves; no bitmap is read or sampled. */
     private fun buildParticles(viewWidth: Int, viewHeight: Int): List<Particle> {
-        val bitmap = try {
-            context.assets.open("images/particle-humanoid-reference.jpg").use {
-                BitmapFactory.decodeStream(it)
-            }
-        } catch (_: Exception) {
-            null
-        } ?: return emptyList()
+        val result = ArrayList<Particle>(PARTICLE_COUNT)
+        val centerX = viewWidth * 0.5f
+        val headCenterY = viewHeight * 0.34f
+        val headRadiusX = viewHeight * 0.145f
+        val headRadiusY = viewHeight * 0.255f
+        val chinY = headCenterY + headRadiusY * 0.92f
+        val shoulderY = viewHeight * 0.69f
 
-        val sourceWidth = bitmap.width
-        val sourceHeight = bitmap.height
-        val pixels = IntArray(sourceWidth * sourceHeight)
-        bitmap.getPixels(pixels, 0, sourceWidth, 0, 0, sourceWidth, sourceHeight)
-        bitmap.recycle()
+        fun cyan(brightness: Float): Int = Color.rgb(
+            (8 + brightness * 32).toInt().coerceIn(0, 255),
+            (125 + brightness * 105).toInt().coerceIn(0, 255),
+            (210 + brightness * 45).toInt().coerceIn(0, 255),
+        )
 
-        data class Candidate(val x: Int, val y: Int, val color: Int, val brightness: Int)
-        val candidates = ArrayList<Candidate>()
-        var brightMinX = sourceWidth
-        var brightMaxX = 0
-        var brightMinY = sourceHeight
-        var brightMaxY = 0
-
-        for (sourceY in 0 until sourceHeight step 3) {
-            for (sourceX in 0 until sourceWidth step 3) {
-                val color = pixels[sourceY * sourceWidth + sourceX]
-                val red = Color.red(color)
-                val green = Color.green(color)
-                val blue = Color.blue(color)
-                val brightness = max(red, max(green, blue))
-                if (brightness < 34 || red + green + blue < 82) continue
-                if (brightness > 82) {
-                    brightMinX = min(brightMinX, sourceX)
-                    brightMaxX = max(brightMaxX, sourceX)
-                    brightMinY = min(brightMinY, sourceY)
-                    brightMaxY = max(brightMaxY, sourceY)
-                }
-                candidates += Candidate(sourceX, sourceY, color, brightness)
-            }
-        }
-        if (candidates.isEmpty()) return emptyList()
-
-        if (brightMaxX <= brightMinX || brightMaxY <= brightMinY) {
-            brightMinX = 0
-            brightMinY = 0
-            brightMaxX = sourceWidth
-            brightMaxY = sourceHeight
-        }
-        val brightWidth = max(1, brightMaxX - brightMinX)
-        val brightHeight = max(1, brightMaxY - brightMinY)
-        val scale = min(viewWidth * 0.84f / brightWidth, viewHeight * 0.92f / brightHeight)
-        val sourceCenterX = (brightMinX + brightMaxX) * 0.5f
-        val sourceCenterY = (brightMinY + brightMaxY) * 0.5f
-
-        val maxParticles = 5_200
-        val stride = max(1.0, candidates.size.toDouble() / maxParticles)
-        val result = ArrayList<Particle>(min(maxParticles, candidates.size))
-        var cursor = random.nextDouble() * stride
-        while (cursor < candidates.size) {
-            val candidate = candidates[cursor.toInt()]
-            val brightness = candidate.brightness / 255f
+        fun add(x: Float, y: Float, color: Int, brightness: Float, radius: Float = 1.6f) {
+            if (result.size >= PARTICLE_COUNT) return
             result += Particle(
-                targetX = viewWidth * 0.5f + (candidate.x - sourceCenterX) * scale,
-                targetY = viewHeight * 0.5f + (candidate.y - sourceCenterY) * scale,
-                color = candidate.color,
-                brightness = brightness,
+                targetX = x,
+                targetY = y,
+                color = color,
+                brightness = brightness.coerceIn(0.35f, 1f),
                 phase = random.nextFloat() * (PI * 2).toFloat(),
-                drift = 1.8f + random.nextFloat() * 3.8f,
-                radius = 0.7f + brightness * 1.65f + random.nextFloat() * 0.45f,
+                drift = 1.8f + random.nextFloat() * 4.2f,
+                radius = radius + random.nextFloat() * 0.65f,
             )
-            cursor += stride
+        }
+
+        // Horizontal holographic scan-lines form an original tapered, faceless head.
+        for (line in 0 until 39) {
+            val vertical = -1f + line / 38f * 2f
+            val profile = sqrt(max(0f, 1f - vertical * vertical))
+            val jawTaper = when {
+                vertical < -0.55f -> 0.70f + (vertical + 1f) * 0.55f
+                vertical > 0.72f -> 0.82f
+                else -> 1f
+            }
+            val halfWidth = headRadiusX * profile * jawTaper
+            val count = (22 + profile * 34).toInt()
+            val y = headCenterY + vertical * headRadiusY
+            for (point in 0 until count) {
+                val across = if (count <= 1) 0.5f else point / (count - 1f)
+                val x = centerX - halfWidth + halfWidth * 2f * across
+                val wave = sin(across * PI.toFloat() * 2f + line * 0.32f) * 1.5f
+                val brightness = 0.55f + profile * 0.34f + random.nextFloat() * 0.11f
+                add(x, y + wave, cyan(brightness), brightness, 1.25f)
+            }
+        }
+
+        // Multiple electric outlines give the head a luminous shell rather than a photo edge.
+        for (shell in 0 until 3) {
+            val shellScale = 1f + shell * 0.035f
+            for (point in 0 until 180) {
+                val angle = point / 180f * (PI * 2).toFloat()
+                val topTaper = 0.93f + 0.07f * sin(angle)
+                add(
+                    centerX + cos(angle) * headRadiusX * shellScale * topTaper,
+                    headCenterY + sin(angle) * headRadiusY * shellScale,
+                    cyan(0.92f),
+                    0.86f + random.nextFloat() * 0.14f,
+                    1.7f,
+                )
+            }
+        }
+
+        // Independent warm energy field floating inside the otherwise faceless head.
+        val faceCenterY = headCenterY + headRadiusY * 0.08f
+        for (ring in 0 until 16) {
+            val ringRadius = (ring + 1f) / 16f
+            val points = 18 + ring
+            for (point in 0 until points) {
+                val angle = point / points.toFloat() * (PI * 2).toFloat() + ring * 0.19f
+                val shimmer = 0.92f + random.nextFloat() * 0.16f
+                val red = 255
+                val green = (105 + (1f - ringRadius) * 105).toInt()
+                val blue = (8 + (1f - ringRadius) * 48).toInt()
+                add(
+                    centerX + cos(angle) * headRadiusX * 0.60f * ringRadius * shimmer,
+                    faceCenterY + sin(angle) * headRadiusY * 0.39f * ringRadius * shimmer,
+                    Color.rgb(red, green, blue),
+                    0.72f + (1f - ringRadius) * 0.28f,
+                    1.65f + (1f - ringRadius) * 0.55f,
+                )
+            }
+        }
+
+        // Gold/cyan streams connect the head to the chest like living neural fibres.
+        for (stream in -5..5) {
+            val streamPosition = stream / 5f
+            for (point in 0 until 35) {
+                val t = point / 34f
+                val spread = viewHeight * (0.018f + t * 0.058f)
+                val curve = sin(t * PI.toFloat()) * sin(stream * 1.7f) * viewWidth * 0.008f
+                val gold = kotlin.math.abs(stream) <= 2
+                add(
+                    centerX + streamPosition * spread + curve,
+                    chinY + (shoulderY - chinY) * t,
+                    if (gold) Color.rgb(240, 176, 70) else cyan(0.78f),
+                    if (gold) 0.88f else 0.70f,
+                    1.35f,
+                )
+            }
+        }
+
+        // Layered shoulder arcs flow outward from the neck.
+        val shoulderHalfWidth = viewWidth * 0.37f
+        for (side in listOf(-1f, 1f)) {
+            for (layer in 0 until 10) {
+                for (point in 0 until 30) {
+                    val t = point / 29f
+                    val x = centerX + side * (viewHeight * 0.045f + shoulderHalfWidth * t)
+                    val arch = sin(t * PI.toFloat()) * viewHeight * (0.085f - layer * 0.0045f)
+                    val y = shoulderY - arch + layer * viewHeight * 0.006f
+                    val brightness = 0.48f + (1f - layer / 10f) * 0.35f
+                    add(x, y, cyan(brightness), brightness, 1.3f)
+                }
+            }
+        }
+
+        // Symmetrical chest energy curves converge into a bright lower core.
+        val chestBottomY = viewHeight * 0.91f
+        for (side in listOf(-1f, 1f)) {
+            for (layer in 0 until 10) {
+                for (point in 0 until 35) {
+                    val t = point / 34f
+                    val startWidth = shoulderHalfWidth * (0.88f - layer * 0.055f)
+                    val x = centerX + side * startWidth * (1f - t).pow(1.35f)
+                    val y = shoulderY + (chestBottomY - shoulderY) * t +
+                        sin(t * PI.toFloat()) * layer * viewHeight * 0.0025f
+                    val brightness = 0.44f + (1f - t) * 0.30f
+                    add(x, y, cyan(brightness), brightness, 1.15f)
+                }
+            }
+        }
+
+        val chestCoreY = viewHeight * 0.775f
+        for (point in 0 until 220) {
+            val angle = random.nextFloat() * (PI * 2).toFloat()
+            val radius = sqrt(random.nextFloat()) * viewHeight * 0.045f
+            add(
+                centerX + cos(angle) * radius * 0.42f,
+                chestCoreY + sin(angle) * radius,
+                Color.rgb(110, 245, 255),
+                0.78f + random.nextFloat() * 0.22f,
+                1.65f,
+            )
+        }
+
+        // Remaining particles form a sparse, asymmetric living aura around the avatar.
+        while (result.size < PARTICLE_COUNT) {
+            val angle = random.nextFloat() * (PI * 2).toFloat()
+            val radius = viewHeight * (0.31f + random.nextFloat() * 0.28f)
+            val x = centerX + cos(angle) * radius * 1.35f
+            val y = headCenterY + sin(angle) * radius
+            add(x, y, cyan(0.48f), 0.38f + random.nextFloat() * 0.32f, 0.9f)
         }
         return result
     }
@@ -314,5 +398,6 @@ class ParticleScreensaverView @JvmOverloads constructor(
 
     companion object {
         private const val ASSEMBLY_DURATION_MS = 3_200f
+        private const val PARTICLE_COUNT = 5_200
     }
 }
