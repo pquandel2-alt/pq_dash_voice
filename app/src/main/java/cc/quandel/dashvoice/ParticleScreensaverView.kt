@@ -8,6 +8,7 @@ import android.util.AttributeSet
 import android.view.View
 import cc.quandel.dashvoice.particle.ParticleAnimationClock
 import cc.quandel.dashvoice.particle.ParticleState
+import org.json.JSONObject
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
@@ -33,6 +34,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
         val phase: Float,
         val drift: Float,
         val radius: Float,
+        val region: String,
         var startX: Float = 0f,
         var startY: Float = 0f,
     )
@@ -57,7 +59,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w > 0 && h > 0) {
-            particles = buildParticles(w, h)
+            particles = buildSharedGeometry(w, h)
             resetAssembly()
         }
     }
@@ -104,6 +106,30 @@ class ParticleScreensaverView @JvmOverloads constructor(
         }
     }
 
+    /** Loads the exact same normalized point set used by tools/avatar-preview.html. */
+    private fun buildSharedGeometry(viewWidth: Int, viewHeight: Int): List<Particle> {
+        val json = context.assets.open("avatar-geometry.json").bufferedReader().use { it.readText() }
+        val source = JSONObject(json).getJSONArray("particles")
+        return ArrayList<Particle>(source.length()).apply {
+            for (index in 0 until source.length()) {
+                val item = source.getJSONObject(index)
+                val color = item.getJSONArray("color")
+                add(
+                    Particle(
+                        targetX = item.getDouble("x").toFloat() * viewWidth,
+                        targetY = item.getDouble("y").toFloat() * viewHeight,
+                        color = Color.rgb(color.getInt(0), color.getInt(1), color.getInt(2)),
+                        brightness = item.getDouble("brightness").toFloat(),
+                        phase = item.getDouble("phase").toFloat(),
+                        drift = item.getDouble("drift").toFloat(),
+                        radius = item.getDouble("radius").toFloat(),
+                        region = item.getString("region"),
+                    )
+                )
+            }
+        }
+    }
+
     /** Builds an original avatar from mathematical curves; no bitmap is read or sampled. */
     private fun buildParticles(viewWidth: Int, viewHeight: Int): List<Particle> {
         val result = ArrayList<Particle>(PARTICLE_COUNT)
@@ -145,7 +171,14 @@ class ParticleScreensaverView @JvmOverloads constructor(
             (210 + brightness * 45).toInt().coerceIn(0, 255),
         )
 
-        fun add(x: Float, y: Float, color: Int, brightness: Float, radius: Float = 1.6f) {
+        fun add(
+            x: Float,
+            y: Float,
+            color: Int,
+            brightness: Float,
+            radius: Float = 1.6f,
+            region: String = "structure",
+        ) {
             if (result.size >= PARTICLE_COUNT) return
             result += Particle(
                 targetX = x,
@@ -155,6 +188,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
                 phase = random.nextFloat() * (PI * 2).toFloat(),
                 drift = 1.8f + random.nextFloat() * 4.2f,
                 radius = radius + random.nextFloat() * 0.65f,
+                region = region,
             )
         }
 
@@ -358,9 +392,9 @@ class ParticleScreensaverView @JvmOverloads constructor(
             val red = Color.red(particle.color)
             val green = Color.green(particle.color)
             val blue = Color.blue(particle.color)
-            val warmCore = normalizedY < 0.52f && red > blue * 1.18f && red > green * 0.90f
+            val warmCore = particle.region == "core"
             if (warmCore) {
-                val faceCenterY = height * 0.38f
+                val faceCenterY = height * 0.353f
                 val corePulse = 1f + sin(seconds * 2.35f) * 0.032f
                 targetX = centerX + (targetX - centerX) * corePulse
                 targetY = faceCenterY + (targetY - faceCenterY) * corePulse
@@ -388,8 +422,17 @@ class ParticleScreensaverView @JvmOverloads constructor(
                 x = targetX + orbitX + releaseX + energyWave * 0.45f
                 y = targetY + orbitY + releaseY + energyWave
             }
+            val listeningEnergy = if (currentState == ParticleState.LISTENING) {
+                0.78f + 0.12f * sin(seconds * 4.2f)
+            } else 0f
+            val speakingBeat = if (currentState == ParticleState.SPEAKING) {
+                val beat = (sin(seconds * 9f) + 1f) * 0.5f
+                (0.35f + beat * 0.65f) * (0.72f + audioLevel * 0.28f) * 0.92f
+            } else 0f
+            val coreEnergy = if (warmCore) max(listeningEnergy, speakingBeat) else 0f
             val pulse = 0.68f + 0.32f * sin(seconds * 2.4f + particle.phase) + speaking * 0.28f
-            val alpha = (255f * (particle.brightness * pulse + 0.18f).coerceIn(0.32f, 1f)).toInt()
+            val alpha = (255f * (particle.brightness * pulse + 0.18f + coreEnergy * 0.42f)
+                .coerceIn(0.32f, 1f)).toInt()
             particlePaint.color = Color.argb(
                 alpha,
                 red,
@@ -398,10 +441,29 @@ class ParticleScreensaverView @JvmOverloads constructor(
             )
             val twinkleSize = 0.78f + 0.32f *
                 ((sin(seconds * 2.7f + particle.phase) + 1f) * 0.5f)
+            val radius = particle.radius * twinkleSize *
+                (1f + speaking * 0.22f + coreEnergy * 0.62f)
+            val structuralGlow = when (particle.region) {
+                "halo", "neckShell" -> 0.12f
+                "chestCore" -> 0.16f
+                "core" -> 0.07f
+                else -> 0f
+            }
+            if (structuralGlow > 0f) {
+                particlePaint.alpha = (255f * structuralGlow * particle.brightness)
+                    .toInt().coerceIn(0, 72)
+                canvas.drawCircle(x, y, radius * 2.65f, particlePaint)
+                particlePaint.alpha = alpha
+            }
+            if (warmCore && coreEnergy > 0.05f) {
+                particlePaint.alpha = (42 + coreEnergy * 62f).toInt().coerceIn(0, 120)
+                canvas.drawCircle(x, y, radius * (2.1f + coreEnergy), particlePaint)
+                particlePaint.alpha = alpha
+            }
             canvas.drawCircle(
                 x,
                 y,
-                particle.radius * twinkleSize * (1f + speaking * 0.22f),
+                radius,
                 particlePaint,
             )
         }
@@ -446,6 +508,6 @@ class ParticleScreensaverView @JvmOverloads constructor(
 
     companion object {
         private const val ASSEMBLY_DURATION_MS = 3_200f
-        private const val PARTICLE_COUNT = 5_200
+        private const val PARTICLE_COUNT = 9_800
     }
 }

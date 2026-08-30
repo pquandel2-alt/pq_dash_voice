@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Avatar Geometry Preview</title>
+<style>
+html,body{margin:0;background:#05070d;color:#bdefff;font:14px sans-serif;height:100%;overflow:hidden}
+#stage{height:100%;display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:1px;background:#223}
+.pane{position:relative;background:#000;overflow:hidden;aspect-ratio:16/10}.pane>img,.pane>canvas{width:100%;height:100%;object-fit:contain}
+.label{position:absolute;top:12px;left:12px;padding:6px 9px;background:#001a;color:#8ee7ff;border:1px solid #166;z-index:2}
+#controls{position:absolute;right:14px;top:14px;z-index:3;display:flex;gap:8px}button{padding:8px 12px;background:#06263a;color:#bff;border:1px solid #168;cursor:pointer}.active{background:#0b5876}
+</style></head><body>
+<div id="controls"><button data-state="IDLE">IDLE</button><button data-state="LISTENING">LISTENING</button><button data-state="SPEAKING">SPEAKING</button></div>
+<main id="stage"><section class="pane"><span class="label">Stilreferenz – nur Vergleich</span><img src="../app/src/main/assets/images/particle-humanoid-reference.jpg"></section>
+<section class="pane"><span class="label">Exakte App-Geometrie</span><canvas id="preview"></canvas></section></main>
+<script type="module">
+const canvas=document.querySelector('#preview'),ctx=canvas.getContext('2d'); let data,state='IDLE',started=performance.now();
+const resize=()=>{canvas.width=canvas.clientWidth;canvas.height=canvas.clientHeight}; addEventListener('resize',resize);resize();
+data=await fetch('../app/src/main/assets/avatar-geometry.json').then(r=>r.json());
+document.querySelectorAll('button').forEach(b=>b.onclick=()=>{state=b.dataset.state;document.querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));});
+document.querySelector('[data-state=IDLE]').classList.add('active');
+function render(now){
+  const t=(now-started)/1000,w=canvas.width,h=canvas.height;
+  ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);
+  const breatheX=1+Math.sin(t*1.05)*.014;
+  const breatheY=1+Math.sin(t*1.05+.35)*.010;
+  const sway=Math.sin(t*.58)*w*.0045;
+  const listeningEnergy=state==='LISTENING'?.78+.12*Math.sin(t*4.2):0;
+  const speakingBeat=(Math.sin(t*9)+1)*.5;
+  const speakingEnergy=state==='SPEAKING'?(0.35+speakingBeat*.65)*.92:0;
+  for(const p of data.particles){
+    const upper=Math.max(.25,Math.min(1,1.15-p.y));
+    let tx=w*.5+(p.x*w-w*.5)*breatheX+sway*upper;
+    let ty=h*.5+(p.y*h-h*.5)*breatheY;
+    const core=p.region==='core';
+    if(core){
+      const corePulse=1+Math.sin(t*2.35)*.032;
+      tx=w*.5+(tx-w*.5)*corePulse;
+      ty=h*.353+(ty-h*.353)*corePulse;
+    }
+    const ox=Math.sin(t*(.72+p.drift*.055)+p.phase)*p.drift;
+    const oy=Math.cos(t*(.61+p.drift*.047)+p.phase)*p.drift;
+    const cycle=(t*.105+p.phase/(Math.PI*2))%1;
+    const release=cycle<.11?Math.sin(cycle/.11*Math.PI):0;
+    const energyWave=Math.sin(t*2.2-p.y*15+p.phase*.16)*1.8;
+    const x=tx+ox+Math.sin(p.phase+t*.85)*release*(8+p.drift*2.2)+energyWave*.45;
+    const y=ty+oy-release*(7+p.drift*2.8)+energyWave;
+    const coreEnergy=core?Math.max(listeningEnergy,speakingEnergy):0;
+    const pulse=.68+.32*Math.sin(t*2.4+p.phase);
+    const alpha=Math.max(.32,Math.min(1,p.brightness*pulse+.18+coreEnergy*.42));
+    const size=p.radius*(.78+.32*((Math.sin(t*2.7+p.phase)+1)*.5))*(1+coreEnergy*.62);
+    const structuralGlow=p.region==='halo'||p.region==='neckShell'?.12:p.region==='chestCore'?.16:core?.07:0;
+    if(structuralGlow>0){
+      ctx.fillStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${structuralGlow*p.brightness})`;
+      ctx.beginPath();ctx.arc(x,y,size*2.65,0,Math.PI*2);ctx.fill();
+    }
+    if(coreEnergy>.02){
+      ctx.fillStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${coreEnergy*.10})`;
+      ctx.beginPath();ctx.arc(x,y,size*(2.2+coreEnergy*.8),0,Math.PI*2);ctx.fill();
+    }
+    ctx.fillStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${alpha})`;
+    ctx.beginPath();ctx.arc(x,y,size,0,Math.PI*2);ctx.fill();
+  }
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script></body></html>
