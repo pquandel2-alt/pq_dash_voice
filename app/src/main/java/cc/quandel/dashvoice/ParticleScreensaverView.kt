@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.View
 import cc.quandel.dashvoice.particle.ParticleAnimationClock
@@ -35,12 +37,21 @@ class ParticleScreensaverView @JvmOverloads constructor(
         val drift: Float,
         val radius: Float,
         val region: String,
+        val path: Int,
         var startX: Float = 0f,
         var startY: Float = 0f,
     )
 
     private val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val filamentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val coreGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val fallbackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val pathSeen = BooleanArray(MAX_PATHS)
+    private val pathX = FloatArray(MAX_PATHS)
+    private val pathY = FloatArray(MAX_PATHS)
     private val random = Random.Default
     private var particles: List<Particle> = emptyList()
     private var running = false
@@ -124,6 +135,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
                         drift = item.getDouble("drift").toFloat(),
                         radius = item.getDouble("radius").toFloat(),
                         region = item.getString("region"),
+                        path = item.optInt("path", -1),
                     )
                 )
             }
@@ -189,6 +201,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
                 drift = 1.8f + random.nextFloat() * 4.2f,
                 radius = radius + random.nextFloat() * 0.65f,
                 region = region,
+                path = -1,
             )
         }
 
@@ -380,6 +393,16 @@ class ParticleScreensaverView @JvmOverloads constructor(
         val breatheY = 1f + sin(seconds * 1.05f + 0.35f) * 0.010f
         val bodySway = sin(seconds * 0.58f) * width * 0.0045f
         val speaking = if (currentState == ParticleState.SPEAKING) audioLevel else 0f
+        val listeningEnergy = if (currentState == ParticleState.LISTENING) {
+            0.78f + 0.12f * sin(seconds * 4.2f)
+        } else 0f
+        val speakingBeat = if (currentState == ParticleState.SPEAKING) {
+            val beat = (sin(seconds * 9f) + 1f) * 0.5f
+            (0.35f + beat * 0.65f) * (0.72f + audioLevel * 0.28f) * 0.92f
+        } else 0f
+        drawCoreGlow(canvas, seconds, max(listeningEnergy, speakingBeat))
+        drawChestGlow(canvas, seconds)
+        pathSeen.fill(false)
 
         for (particle in particles) {
             val normalizedY = (particle.targetY / height).coerceIn(0f, 1f)
@@ -394,7 +417,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
             val blue = Color.blue(particle.color)
             val warmCore = particle.region == "core"
             if (warmCore) {
-                val faceCenterY = height * 0.353f
+                val faceCenterY = height * 0.378f
                 val corePulse = 1f + sin(seconds * 2.35f) * 0.032f
                 targetX = centerX + (targetX - centerX) * corePulse
                 targetY = faceCenterY + (targetY - faceCenterY) * corePulse
@@ -422,13 +445,6 @@ class ParticleScreensaverView @JvmOverloads constructor(
                 x = targetX + orbitX + releaseX + energyWave * 0.45f
                 y = targetY + orbitY + releaseY + energyWave
             }
-            val listeningEnergy = if (currentState == ParticleState.LISTENING) {
-                0.78f + 0.12f * sin(seconds * 4.2f)
-            } else 0f
-            val speakingBeat = if (currentState == ParticleState.SPEAKING) {
-                val beat = (sin(seconds * 9f) + 1f) * 0.5f
-                (0.35f + beat * 0.65f) * (0.72f + audioLevel * 0.28f) * 0.92f
-            } else 0f
             val coreEnergy = if (warmCore) max(listeningEnergy, speakingBeat) else 0f
             val pulse = 0.68f + 0.32f * sin(seconds * 2.4f + particle.phase) + speaking * 0.28f
             val alpha = (255f * (particle.brightness * pulse + 0.18f + coreEnergy * 0.42f)
@@ -443,10 +459,49 @@ class ParticleScreensaverView @JvmOverloads constructor(
                 ((sin(seconds * 2.7f + particle.phase) + 1f) * 0.5f)
             val radius = particle.radius * twinkleSize *
                 (1f + speaking * 0.22f + coreEnergy * 0.62f)
+            if (particle.path in 0 until MAX_PATHS) {
+                if (pathSeen[particle.path] && assembly > 0.72f) {
+                    val lineAlpha = when (particle.region) {
+                        "halo", "silhouette" -> 180
+                        "neckShell" -> 155
+                        "core", "neckEnergy", "flow" -> 178
+                        "shoulder" -> 165
+                        "torso" -> 142
+                        "head" -> 118
+                        "sideWave" -> 66
+                        else -> 72
+                    }
+                    val mainAlpha = (lineAlpha * assembly * particle.brightness)
+                        .toInt().coerceIn(0, 210)
+                    val mainWidth = when (particle.region) {
+                        "halo" -> 2.6f
+                        "silhouette" -> 2.2f
+                        "neckShell", "core" -> 1.65f
+                        "head" -> 1.2f
+                        "sideWave" -> 0.8f
+                        else -> 1.05f
+                    }
+                    if (particle.region in EMISSIVE_PATHS) {
+                        val softStructure = particle.region == "shoulder" || particle.region == "torso"
+                        filamentPaint.color = Color.argb(
+                            (mainAlpha * if (softStructure) 0.13f else 0.28f).toInt(), red, green, blue
+                        )
+                        filamentPaint.strokeWidth = mainWidth * if (softStructure) 3f else 4.6f
+                        canvas.drawLine(pathX[particle.path], pathY[particle.path], x, y, filamentPaint)
+                    }
+                    filamentPaint.color = Color.argb(mainAlpha, red, green, blue)
+                    filamentPaint.strokeWidth = mainWidth
+                    canvas.drawLine(pathX[particle.path], pathY[particle.path], x, y, filamentPaint)
+                }
+                pathSeen[particle.path] = true
+                pathX[particle.path] = x
+                pathY[particle.path] = y
+            }
             val structuralGlow = when (particle.region) {
-                "halo", "neckShell" -> 0.12f
+                "halo", "silhouette" -> 0.20f
+                "neckShell" -> 0.14f
                 "chestCore" -> 0.16f
-                "core" -> 0.07f
+                "core" -> 0.16f
                 else -> 0f
             }
             if (structuralGlow > 0f) {
@@ -468,6 +523,58 @@ class ParticleScreensaverView @JvmOverloads constructor(
             )
         }
         postInvalidateDelayed(33L)
+    }
+
+    private fun drawCoreGlow(canvas: Canvas, seconds: Float, activeEnergy: Float) {
+        val cx = width * 0.5f
+        val cy = height * 0.378f
+        val pulse = 1f + sin(seconds * 2.35f) * 0.025f + activeEnergy * 0.08f
+        val radiusY = height * 0.12f * pulse
+        val radiusX = width * 0.06f * pulse
+        val intensity = 0.78f + activeEnergy * 0.22f
+        coreGlowPaint.shader = RadialGradient(
+            cx,
+            cy,
+            radiusY,
+            intArrayOf(
+                Color.argb((210 * intensity).toInt(), 255, 247, 185),
+                Color.argb((150 * intensity).toInt(), 255, 176, 22),
+                Color.argb((70 * intensity).toInt(), 255, 92, 0),
+                Color.TRANSPARENT,
+            ),
+            floatArrayOf(0f, 0.24f, 0.62f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.save()
+        canvas.scale(radiusX / radiusY, 1f, cx, cy)
+        canvas.drawCircle(cx, cy, radiusY, coreGlowPaint)
+        canvas.restore()
+        coreGlowPaint.shader = null
+    }
+
+    private fun drawChestGlow(canvas: Canvas, seconds: Float) {
+        val cx = width * 0.5f
+        val cy = height * 0.735f
+        val pulse = 1f + sin(seconds * 3.1f) * 0.08f
+        val radiusY = height * 0.048f * pulse
+        val radiusX = width * 0.015f * pulse
+        coreGlowPaint.shader = RadialGradient(
+            cx,
+            cy,
+            radiusY,
+            intArrayOf(
+                Color.argb(220, 220, 255, 255),
+                Color.argb(130, 0, 224, 255),
+                Color.TRANSPARENT,
+            ),
+            floatArrayOf(0f, 0.36f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.save()
+        canvas.scale(radiusX / radiusY, 1f, cx, cy)
+        canvas.drawCircle(cx, cy, radiusY, coreGlowPaint)
+        canvas.restore()
+        coreGlowPaint.shader = null
     }
 
     /** Always-visible native fallback. A decoding failure must never result in a black screen. */
@@ -508,6 +615,11 @@ class ParticleScreensaverView @JvmOverloads constructor(
 
     companion object {
         private const val ASSEMBLY_DURATION_MS = 3_200f
-        private const val PARTICLE_COUNT = 9_800
+        private const val PARTICLE_COUNT = 9_400
+        private const val MAX_PATHS = 512
+        private val EMISSIVE_PATHS = setOf(
+            "halo", "silhouette", "neckShell", "core", "neckEnergy", "flow",
+            "shoulder", "torso"
+        )
     }
 }

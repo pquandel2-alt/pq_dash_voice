@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'app/src/main/assets/avatar-geometry.json');
-const PARTICLE_COUNT = 9800;
+const PARTICLE_COUNT = 9400;
 let seed = 0x51a7c0de;
 const random = () => {
   seed = (1664525 * seed + 1013904223) >>> 0;
@@ -14,52 +14,55 @@ const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const rgb = (r, g, b) => [clamp(Math.round(r), 0, 255), clamp(Math.round(g), 0, 255), clamp(Math.round(b), 0, 255)];
 const cyan = brightness => rgb(8 + brightness * 32, 125 + brightness * 105, 210 + brightness * 45);
 const particles = [];
+let pathSequence = 0;
+const nextPath = () => pathSequence++;
+const pathOrders = new Map();
 
-function add(x, y, color, brightness, radius = 1.35, region = 'structure') {
+function add(x, y, color, brightness, radius = 1.35, region = 'structure', pathId = -1) {
   if (particles.length >= PARTICLE_COUNT) return;
-  const freeParticle = region === 'aura' || region === 'core' || region === 'chestCore';
+  const freeParticle = region === 'aura' || region === 'chestCore' || (region === 'core' && pathId < 0);
+  const pathOrder = pathId >= 0 ? (pathOrders.get(pathId) ?? 0) : 0;
+  if (pathId >= 0) pathOrders.set(pathId, pathOrder + 1);
+  const phase = pathId >= 0
+    ? (pathId * .618 + pathOrder * .024) % (Math.PI * 2)
+    : random() * Math.PI * 2;
   particles.push({
     x: +x.toFixed(6), y: +y.toFixed(6), color,
     brightness: +clamp(brightness, 0.35, 1).toFixed(4),
-    phase: +(random() * Math.PI * 2).toFixed(5),
-    drift: +(freeParticle ? 1.4 + random() * 3.8 : .45 + random() * 1.7).toFixed(4),
-    radius: +(radius + random() * 0.65).toFixed(4),
-    region,
+    phase: +phase.toFixed(5),
+    drift: +(freeParticle ? 1.4 + random() * 3.8 : .55 + (pathId * 37 % 100) / 100 * 1.1).toFixed(4),
+    radius: +(freeParticle ? radius + random() * .65 : radius * .58 + random() * .28).toFixed(4),
+    region, path: pathId,
   });
 }
 
 const cx = 0.5;
-const headCy = 0.335;
-const headRy = 0.205;
+const headCy = 0.36;
+const headRy = 0.18;
 const neckTopY = headCy + headRy;
-const neckBaseY = 0.635;
+const neckBaseY = 0.61;
 const shoulderOuterY = 0.79;
 
 function headHalfWidth(v) {
-  const stops = [[-1,.18],[-.82,.68],[-.52,.96],[-.10,1],[.30,.92],[.60,.72],[.84,.43],[1,.16]];
-  for (let i = 0; i < stops.length - 1; i++) {
-    const [fromY, fromW] = stops[i], [toY, toW] = stops[i + 1];
-    if (v >= fromY && v <= toY) {
-      const t = (v - fromY) / (toY - fromY);
-      return 0.096 * (fromW + (toW - fromW) * t);
-    }
-  }
-  return 0.015;
+  const ellipse = Math.sqrt(Math.max(0, 1 - v * v));
+  const jawTaper = 1 - Math.max(0, v) * .18;
+  return .105 * Math.pow(ellipse, .86) * jawTaper;
 }
 
 // Translucent horizontal energy contours.
 for (let line = 0; line < 30; line++) {
+  const pathId = nextPath();
   const v = -1 + line / 29 * 2;
   const half = headHalfWidth(v);
   const profile = half / .096;
-  const count = Math.round(30 + profile * 50);
+  const count = Math.round(16 + profile * 28);
   const y = headCy + v * headRy;
   for (let point = 0; point < count; point++) {
     const across = point / (count - 1);
     const edge = Math.abs(across - .5) * 2;
     const brightness = .34 + profile * .17 + edge * .22 + random() * .08;
     add(cx - half + half * 2 * across, y + Math.sin(across * Math.PI * 2 + line * .32) * .0015,
-      cyan(brightness), brightness, .95, 'head');
+      cyan(brightness), brightness, .95, 'head', pathId);
   }
 }
 
@@ -67,23 +70,31 @@ for (let line = 0; line < 30; line++) {
 for (let shell = 0; shell < 4; shell++) {
   const offsetX = shell * .00155;
   const offsetY = shell * .0019;
-  for (let point = 0; point < 120; point++) {
-    const v = -1 + point / 119 * 2;
+  const pathId = nextPath();
+  for (let point = 0; point < 90; point++) {
+    const v = -1 + point / 89 * 2;
     const half = headHalfWidth(v) + offsetX;
     const y = headCy + v * (headRy + offsetY);
-    add(cx - half, y, cyan(.98), .9 + random() * .1, 1.55, 'halo');
-    add(cx + half, y, cyan(.98), .9 + random() * .1, 1.55, 'halo');
+    add(cx - half, y, cyan(.98), .9 + random() * .1, 1.55, 'halo', pathId);
   }
+  for (let point = 89; point >= 0; point--) {
+    const v = -1 + point / 89 * 2;
+    const half = headHalfWidth(v) + offsetX;
+    const y = headCy + v * (headRy + offsetY);
+    add(cx + half, y, cyan(.98), .9 + random() * .1, 1.55, 'halo', pathId);
+  }
+  add(cx - offsetX, headCy - headRy - offsetY, cyan(.98), .96, 1.55, 'halo', pathId);
 }
 
 // Warm faceless energy core: coherent horizontal filaments, orange at the edge and almost
 // white in the centre. It remains visibly made from particles rather than becoming a bitmap.
 const coreCy = headCy + .018;
 for (let line = 0; line < 24; line++) {
+  const pathId = nextPath();
   const v = -1 + line / 23 * 2;
   const profile = Math.sqrt(Math.max(0, 1 - v * v));
   const half = .067 * profile;
-  const points = Math.round(18 + profile * 48);
+  const points = Math.round(12 + profile * 32);
   for (let point = 0; point < points; point++) {
     const across = point / (points - 1);
     const radial = Math.sqrt(v * v + Math.pow((across - .5) * 2, 2));
@@ -91,10 +102,10 @@ for (let line = 0; line < 24; line++) {
     add(cx - half + half * 2 * across,
       coreCy + v * .105 + Math.sin(across * Math.PI * 3 + line * .35) * .0018,
       rgb(255, 112 + centre * 125, 8 + centre * 100),
-      .72 + centre * .28, 1.38 + centre * .75, 'core');
+      .72 + centre * .28, 1.38 + centre * .75, 'core', pathId);
   }
 }
-for (let point = 0; point < 180; point++) {
+for (let point = 0; point < 80; point++) {
   const angle = random() * Math.PI * 2;
   const radius = Math.sqrt(random());
   add(cx + Math.cos(angle) * radius * .022, coreCy + Math.sin(angle) * radius * .034,
@@ -103,101 +114,143 @@ for (let point = 0; point < 180; point++) {
 
 // Long, narrow neural neck with gold central fibres.
 for (let stream = -7; stream <= 7; stream++) {
+  const pathId = nextPath();
   const lane = stream / 7;
-  for (let point = 0; point < 45; point++) {
-    const t = point / 44;
+  for (let point = 0; point < 40; point++) {
+    const t = point / 39;
     const spread = .012 + t * .036;
     const curve = Math.sin(t * Math.PI) * Math.sin(stream * 1.35) * .006;
     const gold = Math.abs(stream) <= 2;
     add(cx + lane * spread + curve, neckTopY + (neckBaseY - neckTopY) * t,
-      gold ? rgb(240,176,70) : cyan(.78), gold ? .88 : .7, 1.15, gold ? 'neckEnergy' : 'neck');
+      gold ? rgb(240,176,70) : cyan(.78), gold ? .88 : .7, 1.15,
+      gold ? 'neckEnergy' : 'neck', pathId);
   }
 }
 
 // Bright outer neck shell connects the head silhouette organically to the shoulders.
 for (const side of [-1, 1]) {
   for (let shell = 0; shell < 5; shell++) {
-    for (let point = 0; point < 50; point++) {
-      const t = point / 49;
+    const pathId = nextPath();
+    for (let point = 0; point < 40; point++) {
+      const t = point / 39;
       const chinWidth = .018 + shell * .0018;
       const baseWidth = .044 + shell * .0032;
       const x = cx + side * (chinWidth + (baseWidth - chinWidth) * t) +
         side * Math.sin(t * Math.PI) * .004;
       const y = neckTopY + (neckBaseY - neckTopY) * t;
-      add(x, y, cyan(.86), .76 + shell * .025, 1.22, 'neckShell');
+      add(x, y, cyan(.86), .76 + shell * .025, 1.22, 'neckShell', pathId);
     }
   }
 }
 
-// Continuous shoulder-to-torso streams. Each contour starts at the neck, rounds over the
-// shoulder and returns toward the sternum, so the bust reads as one living form.
-const neckHalf = .036;
-const shoulderHalf = .23;
+// Bright continuous silhouette from the jaw around the upper shoulder.
 for (const side of [-1, 1]) {
-  for (let layer = 0; layer < 21; layer++) {
-    const depth = layer / 20;
-    const widest = shoulderHalf - depth * .135;
-    const endWidth = .040 + depth * .065;
-    const endY = .952 - depth * .075;
-    for (let point = 0; point < 80; point++) {
-      const t = point / 79;
-      let width;
-      let y;
-      if (t < .34) {
-        const u = t / .34;
-        const eased = 1 - Math.pow(1 - u, 2.25);
-        width = neckHalf + depth * .010 + (widest - neckHalf - depth * .010) * eased;
-        y = neckBaseY + (.720 + depth * .006 - neckBaseY) * Math.pow(u, 1.45);
-      } else {
-        const u = (t - .34) / .66;
-        width = widest + (endWidth - widest) * Math.pow(u, 1.72);
-        y = .720 + depth * .006 + (endY - .720 - depth * .006) * Math.pow(u, .92) +
-          Math.sin(u * Math.PI) * (.018 - depth * .004);
-      }
-      const fade = 1 - Math.pow(Math.max(0, (t - .64) / .36), 1.3) * .58;
-      const brightness = (.45 + (1 - depth) * .29 + (1 - t) * .09) * fade;
-      add(cx + side * width, y, cyan(brightness), brightness, 1.04, 'shoulder');
-    }
-  }
-}
-
-// Fine inner ribs fill the chest without forming a flat horizontal shelf.
-for (const side of [-1, 1]) {
-  for (let rib = 0; rib < 7; rib++) {
+  for (let shell = 0; shell < 3; shell++) {
+    const pathId = nextPath();
     for (let point = 0; point < 55; point++) {
       const t = point / 54;
-      const startWidth = .050 + rib * .022;
-      const endWidth = .020 + rib * .006;
-      const x = cx + side * (startWidth + (endWidth - startWidth) * Math.pow(t, 1.08));
-      const y = neckBaseY + .025 + (.93 - neckBaseY - .025) * t +
-        Math.sin(t * Math.PI) * (.014 + rib * .0015);
-      add(x, y, cyan(.61 + (1 - t) * .15), .54 + (1 - t) * .22, 1.02, 'rib');
+      const eased = 1 - Math.pow(1 - t, 2.15);
+      const startWidth = .006 + shell * .0017;
+      const endWidth = .23 + shell * .002;
+      const width = startWidth + (endWidth - startWidth) * eased;
+      const y = neckTopY + (.72 - neckTopY) * Math.pow(t, 1.45) - Math.sin(t * Math.PI) * .012;
+      add(cx + side * width, y, cyan(.98), .86 + shell * .025, 1.4, 'silhouette', pathId);
+    }
+  }
+}
+
+// Nested full-width energy arches reproduce the reference's rib-cage flow: high at the
+// sternum, rounded over both shoulders and progressively narrower/deeper toward the chest.
+const shoulderHalf = .23;
+for (let layer = 0; layer < 22; layer++) {
+  const pathId = nextPath();
+  const depth = layer / 21;
+  const halfWidth = shoulderHalf - depth * .13;
+  const centerY = .605 + depth * .09;
+  const edgeY = .720 + depth * .105;
+  for (let point = 0; point < 60; point++) {
+    const across = -1 + point / 59 * 2;
+    const y = centerY + (edgeY - centerY) * Math.pow(Math.abs(across), 1.72) +
+      Math.sin((across + 1) * Math.PI * 2 + layer * .26) * .0014;
+    const brightness = .48 + (1 - depth) * .32 + (1 - Math.abs(across)) * .05;
+    add(cx + across * halfWidth, y, cyan(brightness), brightness, 1.02, 'shoulder', pathId);
+  }
+}
+
+// Downward torso streams continue the shoulder field and converge below the chest beacon.
+for (const side of [-1, 1]) {
+  for (let layer = 0; layer < 22; layer++) {
+    const pathId = nextPath();
+    const depth = layer / 21;
+    const startWidth = .22 - depth * .12;
+    const startY = .72 + depth * .105;
+    const endWidth = .025 + depth * .055;
+    const endY = .96 - depth * .09;
+    for (let point = 0; point < 45; point++) {
+      const t = point / 44;
+      const x = cx + side * (startWidth + (endWidth - startWidth) * Math.pow(t, 1.72));
+      const y = startY + (endY - startY) * Math.pow(t, .92) + Math.sin(t * Math.PI) * .014;
+      const brightness = .44 + (1 - depth) * .30 + (1 - t) * .08;
+      add(x, y, cyan(brightness), brightness, .98, 'torso', pathId);
     }
   }
 }
 
 // Central living energy fibres and chest beacon.
-for (let stream = -6; stream <= 6; stream++) {
-  for (let point = 0; point < 31; point++) {
-    const t = point / 30;
-    const x = cx + stream * .0052 * (1 - t * .55) + Math.sin(t * Math.PI * 2 + stream) * .0025;
-    const y = neckBaseY + (.925 - neckBaseY) * t;
-    add(x, y, Math.abs(stream) <= 1 ? rgb(225,177,92) : cyan(.65), .62, .95, 'flow');
+for (let stream = -10; stream <= 10; stream++) {
+  const pathId = nextPath();
+  for (let point = 0; point < 45; point++) {
+    const t = point / 44;
+    const x = cx + stream * .0042 * (.45 + t * .95) + Math.sin(t * Math.PI * 2 + stream) * .0025;
+    const y = neckBaseY + (.94 - neckBaseY) * t;
+    const gold = Math.abs(stream) <= 2 || (Math.abs(stream) <= 5 && t < .48);
+    add(x, y, gold ? rgb(225,177,92) : cyan(.68), .66, .95, 'flow', pathId);
   }
 }
-for (let point = 0; point < 280; point++) {
+for (let point = 0; point < 140; point++) {
   const angle = random() * Math.PI * 2;
   const radius = Math.sqrt(random());
-  add(cx + Math.cos(angle) * radius * .018, .79 + Math.sin(angle) * radius * .045,
-    rgb(110,245,255), .78 + random() * .22, 1.55, 'chestCore');
+  add(cx + Math.cos(angle) * radius * .012, .735 + Math.sin(angle) * radius * .028,
+    rgb(110,245,255), .78 + random() * .22, 1.35, 'chestCore');
+}
+
+// Electric side ribbons breathe behind the figure like the reference's loose particle waves.
+for (const side of [-1, 1]) {
+  for (let wave = 0; wave < 5; wave++) {
+    const pathId = nextPath();
+    for (let point = 0; point < 50; point++) {
+      const t = point / 49;
+      const x = cx + side * (.20 + t * .25);
+      const y = .34 + wave * .047 + (t - .5) * (.03 + wave * .006) +
+        Math.sin(t * Math.PI * 2.4 + wave * .92) * (.018 + wave * .002);
+      add(x, y, cyan(.48 + wave * .035), .42 + wave * .035, .72, 'sideWave', pathId);
+    }
+  }
 }
 
 // Sparse crown/side aura only.
 while (particles.length < PARTICLE_COUNT) {
-  const crown = random() < .62;
-  const x = crown ? cx + (random() - .5) * .24 : cx + (random() - .5) * .78;
-  const y = crown ? headCy - headRy - Math.pow(random(), 1.7) * .13 : shoulderOuterY + (random() - .72) * .13;
+  const kind = random();
+  const crown = kind < .46;
+  const torsoFade = kind >= .46 && kind < .80;
+  const x = crown
+    ? cx + (random() - .5) * .24
+    : torsoFade
+      ? cx + (random() - .5) * (.16 + random() * .18)
+      : cx + (random() - .5) * .78;
+  const y = crown
+    ? headCy - headRy - Math.pow(random(), 1.7) * .13
+    : torsoFade
+      ? .82 + Math.pow(random(), .72) * .18
+      : shoulderOuterY + (random() - .72) * .13;
   add(x, y, cyan(.48), .38 + random() * .3, .82, 'aura');
+}
+
+// Preserve the tall humanoid head on a landscape tablet; only the shoulders use the wide canvas.
+for (const particle of particles) {
+  if (particle.region === 'head' || particle.region === 'halo' || particle.region === 'core') {
+    particle.x = +(cx + (particle.x - cx) * .82).toFixed(6);
+  }
 }
 
 fs.writeFileSync(output, JSON.stringify({ version: 1, particles }, null, 0) + '\n');
