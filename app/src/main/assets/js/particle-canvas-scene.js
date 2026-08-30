@@ -1,8 +1,8 @@
 /**
  * CanvasParticleScene is the Android-WebView-safe renderer for the particle assistant.
- * It samples the reference artwork into independently animated particles, but does not
- * depend on WebGL. This keeps older/Huawei WebViews from turning the screensaver black
- * when Chromium loses or refuses the GPU context.
+ * It consumes the same original procedural geometry used by the native Android view and
+ * animates its points without WebGL. This keeps older/Huawei WebViews from turning the
+ * screensaver black when Chromium loses or refuses the GPU context.
  */
 class CanvasParticleScene {
     constructor(canvasElement) {
@@ -11,6 +11,7 @@ class CanvasParticleScene {
         if (!this.ctx) throw new Error('Canvas 2D context unavailable');
 
         this.referenceImage = null;
+        this.geometryData = null;
         this.particles = [];
         this.currentState = 'IDLE';
         this.audioLevel = 0;
@@ -28,6 +29,13 @@ class CanvasParticleScene {
     setReferenceImage(imageElement) {
         this.referenceImage = imageElement;
         imageElement.style.display = 'none';
+    }
+
+    async prepare() {
+        const response = await fetch('avatar-geometry.json');
+        if (!response.ok) throw new Error(`Canvas geometry load failed (${response.status})`);
+        this.geometryData = (await response.json()).particles;
+        this.sampleReference();
     }
 
     configure(opts = {}) {
@@ -49,8 +57,8 @@ class CanvasParticleScene {
     }
 
     start() {
-        if (!this.referenceImage?.naturalWidth) {
-            throw new Error('Particle reference image unavailable');
+        if (!this.geometryData && !this.referenceImage?.naturalWidth) {
+            throw new Error('Particle geometry unavailable');
         }
         this.sampleReference();
         this.isRunning = true;
@@ -62,6 +70,27 @@ class CanvasParticleScene {
     }
 
     sampleReference() {
+        if (this.geometryData) {
+            this.particles = this.geometryData.map(p => {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = Math.sqrt(Math.random()) * Math.max(this.width, this.height) * 0.62;
+                return {
+                    tx: p.x * this.width,
+                    ty: p.y * this.height,
+                    r: p.color[0], g: p.color[1], b: p.color[2],
+                    brightness: p.brightness,
+                    phase: p.phase,
+                    drift: p.drift,
+                    size: Math.max(0.7, p.radius),
+                    x: this.width * 0.5 + Math.cos(angle) * radius,
+                    y: this.height * 0.5 + Math.sin(angle) * radius,
+                    sx: 0, sy: 0,
+                };
+            });
+            this.centerX = this.width * 0.5;
+            this.centerY = this.height * 0.52;
+            return;
+        }
         const image = this.referenceImage;
         if (!image?.naturalWidth) return;
 

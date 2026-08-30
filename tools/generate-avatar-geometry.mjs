@@ -26,13 +26,21 @@ function add(x, y, color, brightness, radius = 1.35, region = 'structure', pathI
   const phase = pathId >= 0
     ? (pathId * .618 + pathOrder * .024) % (Math.PI * 2)
     : random() * Math.PI * 2;
+  const jitter = pathId < 0 ? 0 : region === 'head' ? .0011
+    : region === 'core' ? .0018
+      : region === 'neck' || region === 'neckEnergy' || region === 'flow' ? .0022
+        : region === 'shoulder' || region === 'torso' ? .0032 : .0015;
+  const jitterX = (random() - .5) * jitter * 2;
+  const jitterY = (random() - .5) * jitter * 2;
   particles.push({
-    x: +x.toFixed(6), y: +y.toFixed(6), color,
+    x: +(x + jitterX).toFixed(6), y: +(y + jitterY).toFixed(6), color,
     brightness: +clamp(brightness, 0.35, 1).toFixed(4),
     phase: +phase.toFixed(5),
     drift: +(freeParticle ? 1.4 + random() * 3.8 : .55 + (pathId * 37 % 100) / 100 * 1.1).toFixed(4),
     radius: +(freeParticle ? radius + random() * .65 : radius * .58 + random() * .28).toFixed(4),
-    region, path: pathId,
+    // Native Canvas draws every energy filament as point samples. Keeping path=-1 prevents
+    // the renderer from reconnecting them into CAD-like solid strokes.
+    region, path: -1,
   });
 }
 
@@ -50,12 +58,12 @@ function headHalfWidth(v) {
 }
 
 // Translucent horizontal energy contours.
-for (let line = 0; line < 30; line++) {
+for (let line = 0; line < 44; line++) {
   const pathId = nextPath();
-  const v = -1 + line / 29 * 2;
+  const v = -1 + line / 43 * 2 + Math.sin(line * 1.71) * .003;
   const half = headHalfWidth(v);
   const profile = half / .096;
-  const count = Math.round(16 + profile * 28);
+  const count = Math.round(24 + profile * 42);
   const y = headCy + v * headRy;
   for (let point = 0; point < count; point++) {
     const across = point / (count - 1);
@@ -66,8 +74,8 @@ for (let line = 0; line < 30; line++) {
   }
 }
 
-// Strong profile-following cyan halo.
-for (let shell = 0; shell < 4; shell++) {
+// No explicit profile halo: silhouette is produced by flow density and surface particles.
+for (let shell = 0; shell < 0; shell++) {
   const offsetX = shell * .00155;
   const offsetY = shell * .0019;
   const pathId = nextPath();
@@ -86,6 +94,17 @@ for (let shell = 0; shell < 4; shell++) {
   add(cx - offsetX, headCy - headRy - offsetY, cyan(.98), .96, 1.55, 'halo', pathId);
 }
 
+// Shallow head-surface volume breaks the perfect scan-line regularity without drawing a rim.
+for (let point = 0; point < 900; point++) {
+  const v = -1 + random() * 2;
+  const half = headHalfWidth(v);
+  const across = (random() * 2 - 1) * (.72 + Math.sqrt(random()) * .28);
+  const edge = Math.abs(across);
+  const brightness = .38 + edge * .24 + random() * .13;
+  add(cx + across * half, headCy + v * headRy + (random() - .5) * .004,
+    cyan(brightness), brightness, .78, 'head');
+}
+
 // Warm faceless energy core: coherent horizontal filaments, orange at the edge and almost
 // white in the centre. It remains visibly made from particles rather than becoming a bitmap.
 const coreCy = headCy + .018;
@@ -93,14 +112,14 @@ for (let line = 0; line < 24; line++) {
   const pathId = nextPath();
   const v = -1 + line / 23 * 2;
   const profile = Math.sqrt(Math.max(0, 1 - v * v));
-  const half = .067 * profile;
-  const points = Math.round(12 + profile * 32);
+  const half = .048 * profile * (.86 + (1 - Math.abs(v)) * .14);
+  const points = Math.round(14 + profile * 36);
   for (let point = 0; point < points; point++) {
     const across = point / (points - 1);
     const radial = Math.sqrt(v * v + Math.pow((across - .5) * 2, 2));
     const centre = clamp(1 - radial, 0, 1);
     add(cx - half + half * 2 * across,
-      coreCy + v * .105 + Math.sin(across * Math.PI * 3 + line * .35) * .0018,
+      coreCy + v * .092 + Math.sin(across * Math.PI * 3 + line * .35) * .0018,
       rgb(255, 112 + centre * 125, 8 + centre * 100),
       .72 + centre * .28, 1.38 + centre * .75, 'core', pathId);
   }
@@ -113,14 +132,14 @@ for (let point = 0; point < 80; point++) {
 }
 
 // Long, narrow neural neck with gold central fibres.
-for (let stream = -7; stream <= 7; stream++) {
+for (let stream = -10; stream <= 10; stream++) {
   const pathId = nextPath();
-  const lane = stream / 7;
-  for (let point = 0; point < 40; point++) {
-    const t = point / 39;
-    const spread = .012 + t * .036;
+  const lane = stream / 10;
+  for (let point = 0; point < 45; point++) {
+    const t = point / 44;
+    const spread = .018 + t * .037;
     const curve = Math.sin(t * Math.PI) * Math.sin(stream * 1.35) * .006;
-    const gold = Math.abs(stream) <= 2;
+    const gold = Math.abs(stream) <= 3;
     add(cx + lane * spread + curve, neckTopY + (neckBaseY - neckTopY) * t,
       gold ? rgb(240,176,70) : cyan(.78), gold ? .88 : .7, 1.15,
       gold ? 'neckEnergy' : 'neck', pathId);
@@ -129,7 +148,7 @@ for (let stream = -7; stream <= 7; stream++) {
 
 // Bright outer neck shell connects the head silhouette organically to the shoulders.
 for (const side of [-1, 1]) {
-  for (let shell = 0; shell < 5; shell++) {
+  for (let shell = 0; shell < 0; shell++) {
     const pathId = nextPath();
     for (let point = 0; point < 40; point++) {
       const t = point / 39;
@@ -145,7 +164,7 @@ for (const side of [-1, 1]) {
 
 // Bright continuous silhouette from the jaw around the upper shoulder.
 for (const side of [-1, 1]) {
-  for (let shell = 0; shell < 3; shell++) {
+  for (let shell = 0; shell < 0; shell++) {
     const pathId = nextPath();
     for (let point = 0; point < 55; point++) {
       const t = point / 54;
@@ -159,64 +178,89 @@ for (const side of [-1, 1]) {
   }
 }
 
-// Nested full-width energy arches reproduce the reference's rib-cage flow: high at the
-// sternum, rounded over both shoulders and progressively narrower/deeper toward the chest.
-const shoulderHalf = .23;
-for (let layer = 0; layer < 22; layer++) {
-  const pathId = nextPath();
-  const depth = layer / 21;
-  const halfWidth = shoulderHalf - depth * .13;
-  const centerY = .605 + depth * .09;
-  const edgeY = .720 + depth * .105;
-  for (let point = 0; point < 60; point++) {
-    const across = -1 + point / 59 * 2;
-    const y = centerY + (edgeY - centerY) * Math.pow(Math.abs(across), 1.72) +
-      Math.sin((across + 1) * Math.PI * 2 + layer * .26) * .0014;
-    const brightness = .48 + (1 - depth) * .32 + (1 - Math.abs(across)) * .05;
-    add(cx + across * halfWidth, y, cyan(brightness), brightness, 1.02, 'shoulder', pathId);
-  }
-}
-
-// Downward torso streams continue the shoulder field and converge below the chest beacon.
+// Separate anatomical shoulder filaments: neck base → trapezius → shoulder → soft outer drop.
+// They never join into a full-width arch or a closed chest loop.
+const shoulderHalf = .195;
 for (const side of [-1, 1]) {
-  for (let layer = 0; layer < 22; layer++) {
+  for (let layer = 0; layer < 17; layer++) {
     const pathId = nextPath();
-    const depth = layer / 21;
-    const startWidth = .22 - depth * .12;
-    const startY = .72 + depth * .105;
-    const endWidth = .025 + depth * .055;
-    const endY = .96 - depth * .09;
+    const depth = layer / 16;
+    const startWidth = .020 + depth * .030;
+    const endWidth = shoulderHalf - depth * .018 + Math.sin(layer * 1.9) * .004;
+    const startY = .605 + depth * .016 + Math.sin(layer * 1.37) * .002;
+    const endY = .700 + depth * .058 + Math.sin(layer * 1.71) * .004;
     for (let point = 0; point < 45; point++) {
+      if ((point + layer * 5) % 41 === 0) continue;
       const t = point / 44;
-      const x = cx + side * (startWidth + (endWidth - startWidth) * Math.pow(t, 1.72));
-      const y = startY + (endY - startY) * Math.pow(t, .92) + Math.sin(t * Math.PI) * .014;
-      const brightness = .44 + (1 - depth) * .30 + (1 - t) * .08;
-      add(x, y, cyan(brightness), brightness, .98, 'torso', pathId);
+      const eased = 1 - Math.pow(1 - t, 1.42);
+      const x = cx + side * (startWidth + (endWidth - startWidth) * eased);
+      const y = startY + (endY - startY) * Math.pow(t, 1.18) -
+        Math.sin(t * Math.PI) * (.021 - depth * .006) +
+        Math.sin(t * Math.PI * 2 + layer * .51) * .0015;
+      const brightness = .48 + (1 - depth) * .27 + random() * .08;
+      add(x, y, cyan(brightness), brightness, 1.02, 'shoulder', pathId);
     }
   }
 }
 
-// Central living energy fibres and chest beacon.
-for (let stream = -10; stream <= 10; stream++) {
+// Curved pectoral energy bands connect the sternum to each shoulder without radial spokes.
+for (const side of [-1, 1]) {
+  for (let layer = 0; layer < 12; layer++) {
+    const pathId = nextPath();
+    const n = layer / 11;
+    const p0x = .006 + n * .034, p0y = .732 + n * .018;
+    const p1x = .072 + n * .030, p1y = .618 + n * .050;
+    const p2x = .184 - n * .022, p2y = .700 + n * .050;
+    for (let point = 0; point < 40; point++) {
+      if ((point + layer * 2) % 37 === 0) continue;
+      const t = point / 39, u = 1 - t;
+      const x = u * u * p0x + 2 * u * t * p1x + t * t * p2x;
+      const y = u * u * p0y + 2 * u * t * p1y + t * t * p2y +
+        Math.sin(t * Math.PI * 2 + layer * .7) * .0015;
+      const brightness = .48 + (1 - n) * .25 + random() * .07;
+      add(cx + side * x, y, cyan(brightness), brightness, .98, 'shoulder', pathId);
+    }
+  }
+}
+
+// Open torso filaments follow the sternum downward and taper independently into black.
+for (let strand = -9; strand <= 9; strand++) {
   const pathId = nextPath();
+  const xNorm = strand / 9;
+  const asym = Math.sin(strand * 1.77) * .004;
   for (let point = 0; point < 45; point++) {
     const t = point / 44;
+    if (random() < .035 + t * .10) continue;
+    const width = .122 - t * .064;
+    const x = cx + xNorm * width + asym * Math.sin(t * Math.PI) +
+      Math.sin(t * Math.PI * 2 + strand * .63) * .0017;
+    const y = .695 + t * (.255 + Math.sin(strand * 1.2) * .008);
+    const brightness = .58 - t * .22 + (1 - Math.abs(xNorm)) * .08;
+    add(x, y, cyan(brightness), brightness, .92, 'torso', pathId);
+  }
+}
+
+// Central living energy fibres and chest beacon.
+for (let stream = -6; stream <= 6; stream++) {
+  const pathId = nextPath();
+  for (let point = 0; point < 40; point++) {
+    const t = point / 39;
     const x = cx + stream * .0042 * (.45 + t * .95) + Math.sin(t * Math.PI * 2 + stream) * .0025;
     const y = neckBaseY + (.94 - neckBaseY) * t;
     const gold = Math.abs(stream) <= 2 || (Math.abs(stream) <= 5 && t < .48);
     add(x, y, gold ? rgb(225,177,92) : cyan(.68), .66, .95, 'flow', pathId);
   }
 }
-for (let point = 0; point < 140; point++) {
+for (let point = 0; point < 72; point++) {
   const angle = random() * Math.PI * 2;
   const radius = Math.sqrt(random());
   add(cx + Math.cos(angle) * radius * .012, .735 + Math.sin(angle) * radius * .028,
-    rgb(110,245,255), .78 + random() * .22, 1.35, 'chestCore');
+    rgb(110,245,255), .78 + random() * .22, 1.0, 'chestCore');
 }
 
 // Electric side ribbons breathe behind the figure like the reference's loose particle waves.
 for (const side of [-1, 1]) {
-  for (let wave = 0; wave < 5; wave++) {
+  for (let wave = 0; wave < 0; wave++) {
     const pathId = nextPath();
     for (let point = 0; point < 50; point++) {
       const t = point / 49;

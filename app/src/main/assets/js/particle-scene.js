@@ -2,15 +2,9 @@
  * ParticleScene: WebGL-rendered 3D particle system forming an abstract holographic
  * humanoid AI bust (head + neck + shoulders + upper chest).
  *
- * Architecture (see REGION below):
- * - HEAD / FACE / NECK / SHOULDER_L / SHOULDER_R / CHEST  → structural silhouette
- * - FLOW                                                  → glowing energy lines across
- *                                                            forehead→temple→cheek→neck and
- *                                                            chest→shoulders, rendered as
- *                                                            densely-sampled point chains
- * - FACE_CORE / CHEST_CORE                                → soft volumetric energy clusters
- * - AMBIENT                                                → free-floating particles around
- *                                                            the figure
+ * Architecture (see REGION below): dense head surface + open topographic head flow,
+ * embedded face-core volumes, organic neck/shoulder/chest filaments, chest beacon and
+ * body-local ambient particles. No explicit outline, tube or line objects are used.
  *
  * All regions share ONE THREE.Points draw call with a custom ShaderMaterial (radial-falloff
  * "glow dot" fragment shader, additive blending). Per-particle region/path/seed data is
@@ -24,14 +18,14 @@
  */
 
 const REGION = {
-    HEAD: 0,
-    FACE: 1,
-    NECK: 2,
-    SHOULDER_L: 3,
-    SHOULDER_R: 4,
-    CHEST: 5,
-    FLOW: 6,
-    FACE_CORE: 7,
+    HEAD_SURFACE: 0,
+    HEAD_FLOW: 1,
+    FACE_STRUCTURE: 2,
+    FACE_CORE_OUTER: 3,
+    FACE_CORE_INNER: 4,
+    NECK_FLOW: 5,
+    SHOULDER_FLOW: 6,
+    CHEST_FLOW: 7,
     CHEST_CORE: 8,
     AMBIENT: 9,
 };
@@ -42,14 +36,14 @@ const REGION = {
 // instead of every particle moving in lockstep.
 const REGION_WINDOW = {
     [REGION.AMBIENT]: [0.00, 0.32],
-    [REGION.HEAD]: [0.08, 0.55],
-    [REGION.SHOULDER_L]: [0.10, 0.55],
-    [REGION.SHOULDER_R]: [0.10, 0.55],
-    [REGION.CHEST]: [0.12, 0.58],
-    [REGION.NECK]: [0.40, 0.75],
-    [REGION.FACE]: [0.42, 0.78],
-    [REGION.FLOW]: [0.55, 0.88],
-    [REGION.FACE_CORE]: [0.78, 1.00],
+    [REGION.HEAD_SURFACE]: [0.08, 0.50],
+    [REGION.HEAD_FLOW]: [0.22, 0.62],
+    [REGION.NECK_FLOW]: [0.38, 0.72],
+    [REGION.SHOULDER_FLOW]: [0.40, 0.76],
+    [REGION.FACE_STRUCTURE]: [0.48, 0.78],
+    [REGION.CHEST_FLOW]: [0.55, 0.88],
+    [REGION.FACE_CORE_OUTER]: [0.62, 0.94],
+    [REGION.FACE_CORE_INNER]: [0.78, 1.00],
     [REGION.CHEST_CORE]: [0.80, 1.00],
 };
 
@@ -58,14 +52,15 @@ const REGION_WINDOW = {
 // sphere — width/depth now genuinely depend on height, giving a skull → temple → cheekbone →
 // jaw → chin taper instead of a ball.
 const HEAD_PROFILE = [
-    { h: 1.00, rx: 0.24, rz: 0.30 },
-    { h: 0.86, rx: 0.66, rz: 0.68 },
-    { h: 0.58, rx: 0.91, rz: 0.92 },
-    { h: 0.15, rx: 1.00, rz: 1.00 },
-    { h: -0.30, rx: 0.92, rz: 0.90 },
-    { h: -0.67, rx: 0.70, rz: 0.70 },
-    { h: -0.90, rx: 0.40, rz: 0.43 },
-    { h: -1.00, rx: 0.20, rz: 0.28 },
+    { h: 1.00, rx: 0.18, rz: 0.30 },
+    { h: 0.90, rx: 0.62, rz: 0.72 },
+    { h: 0.62, rx: 0.91, rz: 0.94 },
+    { h: 0.22, rx: 1.00, rz: 1.00 },
+    { h: -0.18, rx: 0.93, rz: 0.91 },
+    { h: -0.52, rx: 0.79, rz: 0.76 },
+    { h: -0.78, rx: 0.55, rz: 0.56 },
+    { h: -0.94, rx: 0.29, rz: 0.36 },
+    { h: -1.00, rx: 0.16, rz: 0.25 },
 ];
 
 function headProfileAt(h) {
@@ -91,12 +86,12 @@ function easeInOutCubic(t) {
 // flow lines. Face core: warm amber/orange. Chest core: cyan-white. Ambient: darker blue-cyan.
 function colorCyanStructure() {
     const c = new THREE.Color();
-    c.setHSL(0.54 + (Math.random() - 0.5) * 0.035, 0.84 + Math.random() * 0.14, 0.43 + Math.random() * 0.12);
+    c.setHSL(0.54 + (Math.random() - 0.5) * 0.035, 0.88 + Math.random() * 0.11, 0.50 + Math.random() * 0.13);
     return c;
 }
 function colorFlow() {
     const c = new THREE.Color();
-    c.setHSL(0.52 + (Math.random() - 0.5) * 0.025, 0.82 + Math.random() * 0.16, 0.50 + Math.random() * 0.12);
+    c.setHSL(0.52 + (Math.random() - 0.5) * 0.025, 0.86 + Math.random() * 0.13, 0.55 + Math.random() * 0.13);
     return c;
 }
 function colorFaceCore(intensity = Math.random()) {
@@ -151,33 +146,47 @@ void main() {
     float size = aSize;
     float alpha = 1.0;
 
-    if (vRegion == 7.0) { // FACE_CORE
+    if (vRegion == 3.0 || vRegion == 4.0) { // FACE CORE, outer + inner
         float pulse = 0.7 + 0.3 * sin(uTime * 1.3 + seed * 6.2831);
-        size *= (1.0 + uFaceCoreEnergy * 0.9) * pulse;
-        alpha *= 0.5 + 0.5 * pulse;
+        float inner = vRegion == 4.0 ? 1.0 : 0.0;
+        size *= (1.0 + uFaceCoreEnergy * (0.48 + inner * 0.42)) * (0.82 + pulse * 0.18);
+        alpha *= (0.28 + inner * 0.34) + 0.32 * pulse;
     } else if (vRegion == 8.0) { // CHEST_CORE
         float pulse = 0.7 + 0.3 * sin(uTime * 1.0 + seed * 6.2831 + 1.5);
         size *= (1.0 + uChestCoreEnergy * 0.8) * pulse;
         alpha *= 0.45 + 0.45 * pulse;
-    } else if (vRegion == 6.0) { // FLOW — traveling glow pulse along the path
+    } else if (vRegion == 1.0 || vRegion == 5.0 || vRegion == 6.0 || vRegion == 7.0) {
         float wave = sin(pathT * 12.0 - uTime * 1.8 + seed * 6.2831);
         float glow = smoothstep(0.5, 1.0, wave);
-        alpha *= 0.30 + 0.70 * glow;
-        size *= 0.75 + 0.7 * glow;
+        alpha *= 0.48 + 0.52 * glow;
+        size *= 0.82 + 0.42 * glow;
     } else if (vRegion == 9.0) { // AMBIENT
-        alpha *= 0.35 * twinkle;
-    } else { // HEAD / FACE / NECK / SHOULDER / CHEST structure
-        size *= (1.0 + uHeadEnergy * 0.25) * twinkle;
-        alpha *= 0.72 + 0.28 * twinkle;
+        alpha *= 0.28 * twinkle;
+    } else {
+        size *= (1.0 + uHeadEnergy * 0.18) * twinkle;
+        alpha *= 0.62 + 0.28 * twinkle;
     }
+    if (vRegion == 0.0) alpha *= 0.56;
+    if (vRegion == 1.0) alpha *= 1.16;
+    if (vRegion == 6.0) {
+        float endFade = 1.0 - smoothstep(0.76, 1.0, pathT) * 0.82;
+        alpha *= endFade;
+    }
+    // A handful of intentionally large points act only as translucent energy haze.
+    if (aSize > 10.0) alpha *= 0.11;
+
+    float frontWeight = smoothstep(-45.0, 58.0, position.z);
+    if (vRegion != 9.0) alpha *= 0.24 + 0.76 * frontWeight;
+    if (vRegion == 7.0) alpha *= smoothstep(-94.0, -45.0, position.y);
 
     alpha *= 0.75 + 0.25 * uAudioLevel;
     if (uGlowPass > 0.5) {
-        float glowScale = vRegion == 9.0 ? 1.8 : (vRegion == 7.0 || vRegion == 8.0 ? 2.8 : 2.5);
+        float glowScale = vRegion == 9.0 ? 2.1 : (vRegion == 3.0 || vRegion == 4.0 || vRegion == 8.0 ? 3.5 : 3.0);
         size *= glowScale;
-        float glowAlpha = 0.055;
-        if (vRegion == 0.0 || vRegion == 3.0 || vRegion == 4.0) glowAlpha = 0.095;
-        if (vRegion == 7.0 || vRegion == 8.0) glowAlpha = 0.060;
+        float glowAlpha = 0.048;
+        if (vRegion == 0.0 || vRegion == 1.0) glowAlpha = 0.12;
+        if (vRegion == 6.0) glowAlpha = 0.074;
+        if (vRegion == 3.0 || vRegion == 4.0 || vRegion == 8.0) glowAlpha = 0.085;
         if (vRegion == 9.0) glowAlpha = 0.040;
         alpha *= glowAlpha;
     }
@@ -211,9 +220,9 @@ void main() {
     float alpha = core * vAlpha;
     if (alpha < 0.015) discard;
 
-    float hotStrength = vRegion == 7.0 ? 0.32 : 0.75;
+    float hotStrength = (vRegion == 3.0 || vRegion == 4.0) ? 0.42 : 0.62;
     vec3 col = vColor + hot * hotStrength;
-    if (vRegion == 0.0 || vRegion == 1.0) {
+    if (vRegion == 0.0 || vRegion == 1.0 || vRegion == 2.0) {
         col = mix(col, vec3(1.0, 0.28, 0.16), uErrorFlash * 0.55);
     }
     gl_FragColor = vec4(col, alpha);
@@ -271,7 +280,7 @@ class ParticleScene {
         this.particleSystem = null;
         this.glowSystem = null;
         this.layout = null; // anatomical constants from computeLayout()
-        this.referenceImage = null;
+        this.geometrySeed = 0x5f3759df;
 
         this.config = {
             quality: 'AUTO',
@@ -307,16 +316,15 @@ class ParticleScene {
             `speed=${this.config.animationSpeedMultiplier}x, assembly=${this.config.assemblyEnabled}`);
     }
 
-    setReferenceImage(imageElement) {
-        this.referenceImage = imageElement;
-    }
-
     syncReferenceVisual() {
-        // The reference image is input data only. The visible result always stays WebGL,
-        // so it remains animated and cannot disappear when WebView evicts an image layer.
-        if (this.referenceImage) this.referenceImage.style.display = 'none';
         this.canvas.style.opacity = '1';
         if (this.glowSystem) this.glowSystem.visible = true;
+    }
+
+    /** Deterministic setup-time PRNG: previews and device builds produce the same sculpture. */
+    random() {
+        this.geometrySeed = (1664525 * this.geometrySeed + 1013904223) >>> 0;
+        return this.geometrySeed / 4294967296;
     }
 
     /** Grobe Geräte-Heuristik für AUTO-Qualität: CPU-Kerne + effektive Pixelzahl. */
@@ -353,7 +361,7 @@ class ParticleScene {
         // Do not count time spent paused as animation time.
         this.lastUpdateTime = performance.now();
         this.log('ParticleScene resumed');
-        this.animate();
+        // The paused RAF chain stays alive, so starting another chain here would double-render.
     }
 
     reset() {
@@ -425,11 +433,11 @@ class ParticleScene {
      */
     computeLayout() {
         const s = this.config.headRadius / 80;
-        const chestTopY = 32 * s;
-        const chestBottomY = -88 * s;
-        const neckBottomY = 28 * s;
-        const neckTopY = 102 * s;
-        const headHalfHeight = 78 * s;
+        const chestTopY = 30 * s;
+        const chestBottomY = -96 * s;
+        const neckBottomY = 25 * s;
+        const neckTopY = 96 * s;
+        const headHalfHeight = 80 * s;
         const headBottomY = neckTopY - 2 * s;
         const headCenterY = headBottomY + headHalfHeight;
         const headTopY = headCenterY + headHalfHeight;
@@ -439,26 +447,26 @@ class ParticleScene {
             s,
             headCenterY,
             headHalfHeight,
-            headHalfWidthMax: 62 * s,
-            headHalfDepthMax: 52 * s,
+            headHalfWidthMax: 60 * s,
+            headHalfDepthMax: 48 * s,
             headTopY,
             headBottomY,
             neckTopY,
             neckBottomY,
-            neckHalfWidth: 25 * s,
-            neckHalfDepth: 20 * s,
+            neckHalfWidth: 23 * s,
+            neckHalfDepth: 18 * s,
             shoulderCenterY,
-            shoulderReachX: 190 * s,
-            shoulderDropY: 38 * s,
+            shoulderReachX: 136 * s,
+            shoulderDropY: 34 * s,
             chestTopY,
             chestBottomY,
-            chestHalfWidthTop: 150 * s,
-            chestHalfWidthBottom: 90 * s,
-            chestHalfDepth: 55 * s,
-            chestCoreY: -5 * s,
-            chestCoreZ: 48 * s,
-            faceCoreY: headCenterY - headHalfHeight * 0.20,
-            faceCoreZ: 53 * s,
+            chestHalfWidthTop: 124 * s,
+            chestHalfWidthBottom: 70 * s,
+            chestHalfDepth: 46 * s,
+            chestCoreY: -22 * s,
+            chestCoreZ: 43 * s,
+            faceCoreY: headCenterY - headHalfHeight * 0.08,
+            faceCoreZ: 47 * s,
         };
     }
 
@@ -467,7 +475,7 @@ class ParticleScene {
         const L = this.layout;
         const figureHeight = L.headTopY - L.chestBottomY;
         const figureCenterY = (L.headTopY + L.chestBottomY) / 2;
-        const fillFraction = 0.82;
+        const fillFraction = 0.92;
         const fovRad = THREE.MathUtils.degToRad(this.camera.fov);
         const distance = figureHeight / (2 * Math.tan(fovRad / 2) * fillFraction);
         this.camera.position.set(0, figureCenterY, THREE.MathUtils.clamp(distance, 260, 1400));
@@ -481,296 +489,219 @@ class ParticleScene {
     generateTargetGeometry() {
         const L = this.layout;
         const budget = this.config.particleCount;
-
-        if (this.referenceImage?.complete && this.referenceImage.naturalWidth > 0) {
-            this.targetPoints = this.generateReferenceParticles(budget, L);
-            return;
-        }
-
+        this.geometrySeed = 0x5f3759df;
         const pts = [];
 
-        const faceCoreBudget = Math.round(budget * 0.075);
-        const chestCoreBudget = Math.round(budget * 0.004);
-        const coreBudget = faceCoreBudget + chestCoreBudget;
-        const remaining = budget - coreBudget;
-        const structuralBudget = Math.round(remaining * 0.56);
-        const flowBudget = Math.round(remaining * 0.29);
-        const ambientBudget = remaining - structuralBudget - flowBudget;
+        const headSurfaceBudget = Math.round(budget * 0.15);
+        const headFlowBudget = Math.round(budget * 0.27);
+        const faceStructureBudget = Math.round(budget * 0.035);
+        const faceCoreBudget = Math.round(budget * 0.115);
+        const neckBudget = Math.round(budget * 0.09);
+        const shoulderBudget = Math.round(budget * 0.13);
+        const chestBudget = Math.round(budget * 0.14);
+        const chestCoreBudget = Math.round(budget * 0.012);
+        const used = headSurfaceBudget + headFlowBudget + faceStructureBudget + faceCoreBudget +
+            neckBudget + shoulderBudget + chestBudget + chestCoreBudget;
+        const ambientBudget = budget - used;
 
-        const headBudget = Math.round(structuralBudget * 0.45);
-        const neckBudget = Math.round(structuralBudget * 0.10);
-        const shoulderBudget = Math.round(structuralBudget * 0.20);
-        const chestBudget = structuralBudget - headBudget - neckBudget - shoulderBudget;
-
-        this.genHeadSurface(pts, headBudget, L);
+        this.genHeadSurface(pts, headSurfaceBudget, L);
+        this.genHeadFlow(pts, headFlowBudget, L);
+        this.genFaceEnergy(pts, faceStructureBudget, L);
         this.genNeck(pts, neckBudget, L);
         this.genShoulder(pts, Math.round(shoulderBudget / 2), L, -1);
         this.genShoulder(pts, shoulderBudget - Math.round(shoulderBudget / 2), L, 1);
         this.genChest(pts, chestBudget, L);
-        this.genFlowPaths(pts, flowBudget, L);
+        this.genFlowPaths(pts, Math.round(budget * 0.045), L);
         this.genFaceCore(pts, faceCoreBudget, L);
-        this.genVolumetricCluster(pts, chestCoreBudget, REGION.CHEST_CORE, 0, L.chestCoreY, L.chestCoreZ, 4 * L.s, 6 * L.s, 3 * L.s, colorChestCore, 3.0);
-        this.genAmbient(pts, ambientBudget, L);
+        this.genVolumetricCluster(pts, chestCoreBudget, REGION.CHEST_CORE, 0, L.chestCoreY, L.chestCoreZ, 5 * L.s, 7 * L.s, 4 * L.s, colorChestCore, 1.65 * L.s);
+        this.genAmbient(pts, Math.max(0, ambientBudget - Math.round(budget * 0.045)), L);
 
         // Pad/trim to the exact configured budget (rounding remainders only).
         while (pts.length < budget) {
-            const src = pts[Math.floor(Math.random() * pts.length)];
-            pts.push({ ...src, x: src.x + (Math.random() - 0.5) * 3, y: src.y + (Math.random() - 0.5) * 3, z: src.z + (Math.random() - 0.5) * 3 });
+            const src = pts[Math.floor(this.random() * pts.length)];
+            pts.push({ ...src, x: src.x + (this.random() - 0.5) * 3, y: src.y + (this.random() - 0.5) * 3, z: src.z + (this.random() - 0.5) * 3 });
         }
         this.targetPoints = pts.slice(0, budget);
     }
 
-    /**
-     * Samples the supplied artwork itself, so assembly particles converge on the exact
-     * silhouette and palette instead of on a hand-authored anatomical approximation.
-     */
-    generateReferenceParticles(budget, L) {
-        const sampleCanvas = document.createElement('canvas');
-        sampleCanvas.width = 360;
-        sampleCanvas.height = 640;
-        const ctx = sampleCanvas.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(this.referenceImage, 0, 0, sampleCanvas.width, sampleCanvas.height);
-        const pixels = ctx.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height).data;
-        const candidates = [];
-
-        for (let y = 0; y < sampleCanvas.height; y++) {
-            for (let x = 0; x < sampleCanvas.width; x++) {
-                const offset = (y * sampleCanvas.width + x) * 4;
-                const r = pixels[offset], g = pixels[offset + 1], b = pixels[offset + 2];
-                const peak = Math.max(r, g, b);
-                const chroma = peak - Math.min(r, g, b);
-                // Reject the JPEG-black background but retain the dim blue particle haze.
-                if (peak >= 18 && (chroma >= 8 || peak >= 70)) candidates.push({ x, y, r, g, b, peak });
-            }
-        }
-
-        const worldHeight = (L.headTopY - L.chestBottomY) * 1.18;
-        const centerY = (L.headTopY + L.chestBottomY) * 0.5;
-        const worldWidth = worldHeight * (this.referenceImage.naturalWidth / this.referenceImage.naturalHeight) * 1.48;
-        const pts = [];
-        const goldenStep = 0.6180339887498949;
-
+    genHeadSurface(pts, budget, L) {
+        // A dense, shallow surface cloud establishes volume. There is deliberately no
+        // silhouette pass: the edge emerges only where many differently offset layers meet.
         for (let i = 0; i < budget; i++) {
-            const candidateIndex = Math.floor(((i * goldenStep) % 1) * candidates.length);
-            const p = candidates[candidateIndex];
-            const u = p.x / (sampleCanvas.width - 1);
-            const v = p.y / (sampleCanvas.height - 1);
-            const intensity = p.peak / 255;
-            const warm = p.r > p.b * 1.18 && p.r > p.g * 1.04;
-            const region = warm
-                ? REGION.FACE_CORE
-                : (intensity < 0.20 ? REGION.AMBIENT : (v < 0.57 ? REGION.HEAD : REGION.CHEST));
-
+            const h = 1 - 2 * this.random();
+            const prof = headProfileAt(h);
+            const theta = (-0.92 + this.random() * 1.84) * Math.PI / 2;
+            const interior = 0.72 + Math.sqrt(this.random()) * 0.28;
+            const xNorm = Math.sin(theta);
+            const edgeNoise = (this.random() - 0.5) * 3.2 * L.s;
+            const x = xNorm * prof.rx * L.headHalfWidthMax * interior + edgeNoise;
+            const zSurface = Math.cos(theta) * prof.rz * L.headHalfDepthMax;
+            const z = zSurface * (0.78 + 0.22 * interior) + (this.random() - 0.5) * 6 * L.s;
+            const y = L.headCenterY + h * L.headHalfHeight +
+                Math.sin(theta * 2.1 + h * 4.0) * 1.4 * L.s + (this.random() - 0.5) * 2.2 * L.s;
+            const color = colorCyanStructure();
+            if (Math.abs(h + 0.05) < 0.50 && Math.abs(xNorm) < 0.58) color.multiplyScalar(0.48);
             pts.push({
-                x: (u - 0.5) * worldWidth,
-                y: centerY + (0.5 - v) * worldHeight,
-                z: (24 + intensity * 30 + (Math.random() - 0.5) * 4) * L.s,
-                region,
-                color: new THREE.Color(p.r / 255, p.g / 255, p.b / 255),
-                size: (1.15 + intensity * 1.9) * L.s,
-                pathT: v,
+                x, y, z,
+                region: REGION.HEAD_SURFACE,
+                color,
+                size: (0.82 + this.random() * 0.72) * L.s,
+                pathT: h * 0.5 + 0.5,
             });
         }
-        return pts;
     }
 
-    genHeadSurface(pts, budget, L) {
-        // Stacked camera-facing scan lines keep the faceless oval readable instead of
-        // turning it into a transparent wireframe globe.
-        const haloBudget = Math.round(budget * 0.20);
-        const bandBudget = budget - haloBudget;
-        const rings = Math.max(26, Math.round(Math.sqrt(bandBudget * 0.55)));
-        const segments = Math.max(20, Math.round(bandBudget / rings));
-        for (let i = 0; i < rings; i++) {
-            const u = i / (rings - 1);
-            const h = 1 - 2 * u;
+    /** Irregular topographic filaments across the frontal skull; open and softly broken. */
+    genHeadFlow(pts, budget, L) {
+        const layers = 44;
+        const perLayer = Math.max(18, Math.floor(budget / layers));
+        for (let layer = 0; layer < layers; layer++) {
+            const baseU = layer / (layers - 1);
+            const h = 1 - 2 * baseU + Math.sin(layer * 1.71) * 0.009;
             const prof = headProfileAt(h);
-            const y = L.headCenterY + h * L.headHalfHeight;
-            for (let j = 0; j < segments; j++) {
-                const xNorm = (j / (segments - 1)) * 2 - 1;
-                const x = xNorm * prof.rx * L.headHalfWidthMax;
-                const z = Math.sqrt(Math.max(0, 1 - xNorm * xNorm)) * prof.rz * L.headHalfDepthMax;
-                const color = colorCyanStructure();
-                // Keep the cyan scan lines visible across the warm core without bleaching it.
-                if (Math.abs(h + 0.08) < 0.58 && Math.abs(xNorm) < 0.72) color.multiplyScalar(0.42);
-                pts.push({ x, y, z, region: REGION.HEAD, color, size: 1.65 * L.s, pathT: -1 });
-            }
-        }
-
-        // Several slightly offset silhouette passes create the bright electric-cyan rim.
-        const passes = 4;
-        const perPass = Math.max(40, Math.floor(haloBudget / passes));
-        for (let pass = 0; pass < passes; pass++) {
-            for (const side of [-1, 1]) {
-                for (let i = 0; i < Math.floor(perPass / 2); i++) {
-                    const h = 1 - 2 * (i / (Math.floor(perPass / 2) - 1));
-                    const prof = headProfileAt(h);
-                    const passDistance = Math.abs(pass - (passes - 1) / 2);
-                    const spread = (pass - (passes - 1) / 2) * 1.05 * L.s;
-                    pts.push({
-                        x: side * (prof.rx * L.headHalfWidthMax + spread),
-                        y: L.headCenterY + h * L.headHalfHeight,
-                        z: 14 * L.s + pass * 0.35 * L.s,
-                        region: REGION.HEAD,
-                        color: colorFlow(),
-                        size: (2.9 - passDistance * 0.18) * L.s,
-                        pathT: -1,
-                    });
-                }
-            }
-        }
-    }
-
-    /** Large warm energy field made from horizontal contour strands; no facial features. */
-    genFaceCore(pts, budget, L) {
-        const rings = 34;
-        const lineBudget = Math.round(budget * 0.82);
-        const perRing = Math.max(12, Math.floor(lineBudget / rings));
-        const halfH = 34 * L.s;
-        const halfW = 37 * L.s;
-        for (let row = 0; row < rings; row++) {
-            const h = 1 - (row / (rings - 1)) * 2;
-            const rowWidth = halfW * Math.sqrt(Math.max(0, 1 - h * h));
-            const y = L.faceCoreY + h * halfH;
-            for (let j = 0; j < perRing; j++) {
-                const xNorm = (j / (perRing - 1)) * 2 - 1;
-                const radial = Math.sqrt(Math.max(0, 1 - xNorm * xNorm - h * h * 0.45));
-                const intensity = radial * (0.72 + Math.random() * 0.28);
+            const asym = Math.sin(layer * 2.37) * 0.018;
+            const edgeInsetL = 0.04 + this.random() * 0.12;
+            const edgeInsetR = 0.04 + this.random() * 0.12;
+            for (let j = 0; j < perLayer; j++) {
+                if (this.random() < 0.075) continue;
+                const t = j / (perLayer - 1);
+                const xNorm = -1 + edgeInsetL + t * (2 - edgeInsetL - edgeInsetR);
+                const curveY = Math.cos(xNorm * Math.PI * 0.72) * (1.5 + 1.2 * Math.sin(layer * 0.63)) * L.s;
+                const x = (xNorm + asym * (1 - Math.abs(xNorm))) * prof.rx * L.headHalfWidthMax;
+                const z = Math.sqrt(Math.max(0.02, 1 - xNorm * xNorm)) * prof.rz * L.headHalfDepthMax +
+                    (this.random() - 0.5) * 2.8 * L.s;
+                const color = colorFlow();
+                if (Math.abs(h + 0.05) < 0.48 && Math.abs(xNorm) < 0.62) color.multiplyScalar(0.38);
                 pts.push({
-                    x: xNorm * rowWidth,
-                    y: y + Math.sin(xNorm * Math.PI) * 1.4 * L.s,
-                    z: L.faceCoreZ + radial * 2 * L.s,
-                    region: REGION.FACE_CORE,
-                    color: colorFaceCore(intensity),
-                    size: (1.75 + intensity * 0.75) * L.s,
-                    pathT: row / (rings - 1),
+                    x: x + (this.random() - 0.5) * 1.0 * L.s,
+                    y: L.headCenterY + h * L.headHalfHeight + curveY + (this.random() - 0.5) * 0.9 * L.s,
+                    z,
+                    region: REGION.HEAD_FLOW,
+                    color,
+                    size: (1.06 + this.random() * 0.48) * L.s,
+                    pathT: t,
                 });
             }
         }
-        const cloudBudget = Math.max(0, budget - rings * perRing - 2);
-        this.genVolumetricCluster(
-            pts, cloudBudget, REGION.FACE_CORE,
-            0, L.faceCoreY, L.faceCoreZ - 2 * L.s,
-            28 * L.s, 30 * L.s, 5 * L.s,
-            colorFaceCore, 2.2 * L.s
-        );
-        // A restrained central spark keeps the core orange instead of turning into a
-        // white lamp on lower-density/mobile displays.
-        for (const size of [24, 15]) {
-            pts.push({
-                x: 0,
-                y: L.faceCoreY,
-                z: L.faceCoreZ + 5 * L.s,
-                region: REGION.FACE_CORE,
-                color: colorFaceCore(0.72),
-                size: size * L.s,
-                pathT: 0.5,
-            });
-        }
     }
 
-    /** Subtle front-facing feature lines: brow, nose ridge, cheeks, jawline, mouth line. */
-    genFaceStructure(pts, budget, L) {
-        const s = L.s;
-        const addChain = (points3d, count, sizeMul = 1) => {
-            const curve = new THREE.CatmullRomCurve3(points3d.map(p => new THREE.Vector3(p[0], p[1], p[2])));
-            const sampled = curve.getSpacedPoints(Math.max(2, count - 1));
-            for (const p of sampled) {
+    /** Embedded pear-shaped volumetric energy, layered white-yellow → gold → transparent amber. */
+    genFaceCore(pts, budget, L) {
+        const outerBudget = Math.round(budget * 0.54);
+        const middleBudget = Math.round(budget * 0.38);
+        const innerBudget = budget - outerBudget - middleBudget;
+        const addLayer = (count, scale, region, intensityMin) => {
+            for (let i = 0; i < count; i++) {
+                const ny = this.random() * 2 - 1;
+                const profileWidth = (0.64 + 0.36 * (1 - ny * ny)) * (ny > 0 ? 0.78 + 0.22 * (1 - ny) : 1.0);
+                const angle = this.random() * Math.PI * 2;
+                const radius = Math.sqrt(this.random());
+                const x = Math.cos(angle) * radius * 25 * scale * profileWidth * L.s;
+                const y = L.faceCoreY + ny * 36 * scale * L.s + Math.sin(angle * 2.0) * 1.2 * L.s;
+                const depth = Math.sin(angle) * radius;
+                const z = L.faceCoreZ - 3 * L.s + depth * 8 * scale * L.s + (1 - radius) * 4 * L.s;
+                const intensity = intensityMin + (1 - radius) * (1 - intensityMin);
+                const color = colorFaceCore(intensity);
+                if (region === REGION.FACE_CORE_INNER && intensity > 0.90) color.lerp(new THREE.Color(0xfff4bd), 0.42);
                 pts.push({
-                    x: p.x + (Math.random() - 0.5) * 2.5 * s,
-                    y: p.y + (Math.random() - 0.5) * 2.5 * s,
-                    z: p.z + (Math.random() - 0.5) * 2.5 * s,
-                    region: REGION.FACE,
-                    color: colorCyanStructure(),
-                    size: 1.9 * s * sizeMul,
-                    pathT: -1,
+                    x, y, z, region, color,
+                    size: ((region === REGION.FACE_CORE_INNER ? 1.18 : 0.95) + this.random() * 0.65) * L.s,
+                    pathT: ny * 0.5 + 0.5,
                 });
             }
         };
+        addLayer(outerBudget, 1.0, REGION.FACE_CORE_OUTER, 0.18);
+        addLayer(middleBudget, 0.72, REGION.FACE_CORE_OUTER, 0.42);
+        addLayer(innerBudget, 0.22, REGION.FACE_CORE_INNER, 0.76);
 
-        const featureCount = 6; // brow(L/R), cheek(L/R), jaw(L/R) share budget; nose+mouth fixed small
-        const perFeature = Math.max(4, Math.round((budget * 0.8) / featureCount));
-
-        for (const side of [-1, 1]) {
-            const browZ = headProfileAt(0.35).rz * L.headHalfDepthMax * 0.95;
-            addChain([
-                [side * 14 * s, L.headCenterY + L.headHalfHeight * 0.38, browZ],
-                [side * 32 * s, L.headCenterY + L.headHalfHeight * 0.34, browZ * 0.96],
-                [side * 46 * s, L.headCenterY + L.headHalfHeight * 0.26, browZ * 0.88],
-            ], perFeature);
-
-            const cheekZ = headProfileAt(-0.15).rz * L.headHalfDepthMax * 0.9;
-            addChain([
-                [side * 30 * s, L.headCenterY - L.headHalfHeight * 0.02, cheekZ],
-                [side * 44 * s, L.headCenterY - L.headHalfHeight * 0.18, cheekZ * 0.92],
-                [side * 36 * s, L.headCenterY - L.headHalfHeight * 0.34, cheekZ * 0.8],
-            ], perFeature);
-
-            const jawPts = [];
-            for (let t = 0; t <= 1; t += 0.34) {
-                const h = -0.35 - t * 0.6;
-                const prof = headProfileAt(h);
-                jawPts.push([side * prof.rx * L.headHalfWidthMax * 0.9, L.headCenterY + h * L.headHalfHeight, prof.rz * L.headHalfDepthMax * 0.95]);
-            }
-            addChain(jawPts, perFeature, 0.85);
+        for (const halo of [
+            { size: 58, color: 0xff6f12, z: -5 },
+            { size: 39, color: 0xff941d, z: -2 },
+            { size: 23, color: 0xffbd42, z: 1 },
+        ]) {
+            pts.push({
+                x: 0, y: L.faceCoreY, z: L.faceCoreZ + halo.z * L.s,
+                region: REGION.FACE_CORE_OUTER,
+                color: new THREE.Color(halo.color),
+                size: halo.size * L.s,
+                pathT: 0.5,
+            });
         }
 
-        // Nose ridge: centered, proud of the base surface, brow → tip → philtrum.
-        const noseZ = headProfileAt(0.1).rz * L.headHalfDepthMax;
-        addChain([
-            [0, L.headCenterY + L.headHalfHeight * 0.32, noseZ * 0.9],
-            [0, L.headCenterY + L.headHalfHeight * 0.10, noseZ * 1.18],
-            [0, L.headCenterY - L.headHalfHeight * 0.05, noseZ * 1.22],
-            [0, L.headCenterY - L.headHalfHeight * 0.14, noseZ * 1.05],
-        ], Math.max(4, Math.round(budget * 0.1)), 0.9);
+        // A few warm, open filaments bind the cloud into the cyan face surface.
+        const filamentCount = Math.max(6, Math.floor(budget * 0.025));
+        for (let i = 0; i < filamentCount; i++) {
+            const t = i / Math.max(1, filamentCount - 1);
+            pts.push({
+                x: Math.sin(t * Math.PI * 3.2) * 7 * (1 - Math.abs(t - 0.5)) * L.s,
+                y: L.faceCoreY + (t - 0.5) * 54 * L.s,
+                z: L.faceCoreZ + 4 * L.s,
+                region: REGION.FACE_CORE_INNER,
+                color: colorFaceCore(0.82 + this.random() * 0.18),
+                size: 1.25 * L.s,
+                pathT: t,
+            });
+        }
+    }
 
-        // Mouth line: short, subtle, no eye-ring equivalent.
-        const mouthZ = headProfileAt(-0.55).rz * L.headHalfDepthMax * 0.98;
-        addChain([
-            [-16 * s, L.headCenterY - L.headHalfHeight * 0.55, mouthZ],
-            [0, L.headCenterY - L.headHalfHeight * 0.57, mouthZ * 1.03],
-            [16 * s, L.headCenterY - L.headHalfHeight * 0.55, mouthZ],
-        ], Math.max(4, Math.round(budget * 0.1)), 0.8);
-
-        // Eye-hollow hint: sparse, slightly recessed points — deliberately NOT a ring/circle.
-        for (const side of [-1, 1]) {
-            for (let i = 0; i < 6; i++) {
-                const z = headProfileAt(0.22).rz * L.headHalfDepthMax * (0.7 + Math.random() * 0.15);
+    /** Sparse open facial energy wisps; no brows, mouth, mask edge or closed feature loops. */
+    genFaceEnergy(pts, budget, L) {
+        const strands = 11;
+        const perStrand = Math.max(8, Math.floor(budget / strands));
+        for (let strand = 0; strand < strands; strand++) {
+            const n = strand / (strands - 1);
+            const side = n < 0.5 ? -1 : 1;
+            const spread = Math.abs(n - 0.5) * 2;
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(side * (4 + spread * 18) * L.s, L.headCenterY + 46 * L.s, 43 * L.s),
+                new THREE.Vector3(side * (10 + spread * 24) * L.s, L.headCenterY + 20 * L.s, 49 * L.s),
+                new THREE.Vector3(side * (7 + spread * 29) * L.s, L.headCenterY - 7 * L.s, 51 * L.s),
+                new THREE.Vector3(side * (11 + spread * 23) * L.s, L.headCenterY - 34 * L.s, 46 * L.s),
+                new THREE.Vector3(side * (6 + spread * 10) * L.s, L.headCenterY - 56 * L.s, 40 * L.s),
+            ]);
+            const sampled = curve.getSpacedPoints(perStrand - 1);
+            sampled.forEach((p, i) => {
+                if ((i + strand * 3) % 17 === 0) return;
+                const color = colorFlow();
+                color.multiplyScalar(0.55 + (1 - spread) * 0.18);
                 pts.push({
-                    x: side * (26 + Math.random() * 16) * s,
-                    y: L.headCenterY + L.headHalfHeight * (0.20 + Math.random() * 0.08),
-                    z,
-                    region: REGION.FACE,
-                    color: colorCyanStructure(),
-                    size: 1.5 * s,
-                    pathT: -1,
+                    x: p.x + Math.sin(i * 0.55 + strand) * 0.7 * L.s,
+                    y: p.y + Math.cos(i * 0.39 + strand * 1.7) * 0.7 * L.s,
+                    z: p.z + Math.sin(strand * 2.1) * 1.5 * L.s,
+                    region: REGION.FACE_STRUCTURE,
+                    color,
+                    size: (0.72 + this.random() * 0.35) * L.s,
+                    pathT: i / Math.max(1, sampled.length - 1),
                 });
-            }
+            });
         }
     }
 
     genNeck(pts, budget, L) {
-        const strands = 18;
+        const strands = 16;
         const perStrand = Math.max(8, Math.round(budget / strands));
         for (let strand = 0; strand < strands; strand++) {
             const xNorm = (strand / (strands - 1)) * 2 - 1;
             const absX = Math.abs(xNorm);
+            const phase = strand * 1.83;
+            const sideDrift = Math.sin(phase) * 2.4 * L.s;
             const curve = new THREE.CatmullRomCurve3([
-                new THREE.Vector3(xNorm * 13 * L.s, L.neckTopY + 3 * L.s, 42 * L.s),
-                new THREE.Vector3(xNorm * (11 + absX * 4) * L.s, L.neckTopY - 29 * L.s, 40 * L.s),
-                new THREE.Vector3(xNorm * (16 + absX * 7) * L.s, L.neckBottomY + 18 * L.s, 43 * L.s),
-                new THREE.Vector3(xNorm * (30 + absX * 8) * L.s, L.neckBottomY, 44 * L.s),
+                new THREE.Vector3(xNorm * (10 + absX * 6) * L.s, L.neckTopY + 5 * L.s, 41 * L.s),
+                new THREE.Vector3(xNorm * (15 - absX * 3) * L.s + sideDrift, L.neckTopY - 24 * L.s, 43 * L.s),
+                new THREE.Vector3(xNorm * (10 + absX * 8) * L.s - sideDrift * 0.6, L.neckBottomY + 20 * L.s, 42 * L.s),
+                new THREE.Vector3(xNorm * (24 + absX * 12) * L.s, L.chestCoreY + 7 * L.s, 43 * L.s),
+                new THREE.Vector3(xNorm * 5 * L.s, L.chestCoreY, L.chestCoreZ),
             ]);
             const sampled = curve.getSpacedPoints(perStrand - 1);
             sampled.forEach((p, i) => {
                 const warm = absX < 0.34;
                 pts.push({
-                    x: p.x + Math.sin(i * 0.24 + xNorm * 2) * 0.8 * L.s,
-                    y: p.y + Math.sin(strand * 1.71 + i * 0.31) * 1.1 * L.s,
-                    z: p.z,
-                    region: REGION.NECK,
+                    x: p.x + Math.sin(i * 0.31 + phase) * 0.65 * L.s,
+                    y: p.y + Math.sin(phase + i * 0.27) * 0.8 * L.s,
+                    z: p.z + Math.cos(phase + i * 0.2) * 1.4 * L.s,
+                    region: REGION.NECK_FLOW,
                     color: warm ? colorNeckEnergy() : colorCyanStructure(),
-                    size: (warm ? 1.35 : 1.95) * L.s,
+                    size: (warm ? 1.0 : 1.2) * L.s,
                     pathT: i / (perStrand - 1),
                 });
             });
@@ -778,28 +709,31 @@ class ParticleScene {
     }
 
     genShoulder(pts, budget, L, side) {
-        const region = side < 0 ? REGION.SHOULDER_L : REGION.SHOULDER_R;
-        const layers = 5;
+        const layers = 14;
         const perLayer = Math.max(12, Math.round(budget / layers));
         for (let layer = 0; layer < layers; layer++) {
-            const depth = layer / (layers - 1);
-            const offset = (depth - 0.5) * 5 * L.s;
+            const n = layer / (layers - 1);
+            const asym = side * Math.sin(layer * 2.17 + (side > 0 ? 0.7 : 0)) * 4.2 * L.s;
+            const yOffset = (n - 0.5) * 17 * L.s + Math.sin(layer * 1.47) * 1.6 * L.s;
+            const zOffset = (n - 0.5) * 13 * L.s;
             const curve = new THREE.CatmullRomCurve3([
-                new THREE.Vector3(side * 18 * L.s, L.headBottomY - 9 * L.s + offset, 38 * L.s),
-                new THREE.Vector3(side * 31 * L.s, L.neckTopY - 37 * L.s + offset, 42 * L.s),
-                new THREE.Vector3(side * 76 * L.s, L.shoulderCenterY + 24 * L.s + offset, 36 * L.s),
-                new THREE.Vector3(side * 141 * L.s, L.shoulderCenterY + 3 * L.s + offset, 22 * L.s),
-                new THREE.Vector3(side * L.shoulderReachX, L.shoulderCenterY - 38 * L.s + offset * 0.25, 7 * L.s),
+                new THREE.Vector3(side * (20 + n * 8) * L.s, L.neckBottomY + 22 * L.s + yOffset * 0.25, 39 * L.s + zOffset),
+                new THREE.Vector3(side * (39 + n * 10) * L.s, L.shoulderCenterY + (25 - n * 4) * L.s + yOffset * 0.45, 41 * L.s + zOffset),
+                new THREE.Vector3(side * (74 + n * 12) * L.s + asym, L.shoulderCenterY + (18 - n * 8) * L.s + yOffset, 35 * L.s + zOffset),
+                new THREE.Vector3(side * (108 + n * 13) * L.s, L.shoulderCenterY + (5 - n * 12) * L.s + yOffset, 25 * L.s + zOffset * 0.7),
+                new THREE.Vector3(side * (L.shoulderReachX - n * 18 * L.s + Math.sin(layer * 1.9) * 5 * L.s), L.shoulderCenterY - (18 + n * 15) * L.s + yOffset * 0.5, 12 * L.s + zOffset * 0.3),
             ]);
             const sampled = curve.getSpacedPoints(perLayer - 1);
             sampled.forEach((p, i) => {
+                const color = colorCyanStructure();
+                color.multiplyScalar(0.58 + this.random() * 0.25);
                 pts.push({
-                    x: p.x,
-                    y: p.y,
+                    x: p.x + Math.sin(i * 0.73 + layer) * 0.45 * L.s,
+                    y: p.y + Math.cos(i * 0.51 + layer * 1.3) * 0.45 * L.s,
                     z: p.z,
-                    region,
-                    color: colorCyanStructure(),
-                    size: (layer === 0 || layer === layers - 1 ? 2.8 : 1.9) * L.s,
+                    region: REGION.SHOULDER_FLOW,
+                    color,
+                    size: (1.02 + this.random() * 0.48) * L.s,
                     pathT: i / (perLayer - 1),
                 });
             });
@@ -807,37 +741,61 @@ class ParticleScene {
     }
 
     genChest(pts, budget, L) {
-        const fansPerSide = 25;
-        const perFan = Math.max(12, Math.floor(budget / (fansPerSide * 2)));
+        const bandsPerSide = 18;
+        const perBand = Math.max(12, Math.floor((budget * 0.68) / (bandsPerSide * 2)));
         for (const side of [-1, 1]) {
-            for (let lane = 0; lane < fansPerSide; lane++) {
-                const n = lane / (fansPerSide - 1);
+            for (let lane = 0; lane < bandsPerSide; lane++) {
+                const n = lane / (bandsPerSide - 1);
+                const asym = Math.sin(lane * 1.91 + side * 0.8) * 2.2 * L.s;
                 const curve = new THREE.CatmullRomCurve3([
-                    new THREE.Vector3(side * (3 + n * 78) * L.s, L.chestBottomY + n * 43 * L.s, 18 * L.s),
-                    new THREE.Vector3(side * (4 + n * 67) * L.s, L.chestCoreY - 49 * L.s, 32 * L.s),
-                    new THREE.Vector3(side * (9 + n * 53) * L.s, L.chestCoreY - 8 * L.s, 48 * L.s),
-                    new THREE.Vector3(side * (40 + n * 78) * L.s, L.shoulderCenterY + (8 + n * 10) * L.s, 38 * L.s),
-                    new THREE.Vector3(side * (76 + n * 103) * L.s, L.shoulderCenterY - (8 + n * 36) * L.s, 20 * L.s),
+                    new THREE.Vector3(side * (5 + n * 35) * L.s, L.chestCoreY - (3 + n * 26) * L.s, L.chestCoreZ + 1 * L.s),
+                    new THREE.Vector3(side * (25 + n * 25) * L.s + asym, L.chestCoreY + (4 - n * 19) * L.s, 44 * L.s),
+                    new THREE.Vector3(side * (54 + n * 27) * L.s, L.shoulderCenterY + (4 - n * 20) * L.s, 38 * L.s),
+                    new THREE.Vector3(side * (88 + n * 27) * L.s - asym, L.shoulderCenterY + (10 - n * 29) * L.s, 29 * L.s),
+                    new THREE.Vector3(side * (119 + n * 9) * L.s, L.shoulderCenterY - (9 + n * 28) * L.s, 17 * L.s),
                 ]);
-                const phase = (lane * 0.37) % 1;
-                const sampled = [];
-                for (let i = 0; i < perFan; i++) {
-                    sampled.push(curve.getPointAt(Math.min(1, (i + phase) / (perFan - 1))));
-                }
+                const sampled = curve.getSpacedPoints(perBand - 1);
                 sampled.forEach((p, i) => pts.push({
-                    x: p.x + Math.sin(lane * 1.9 + i * 0.7) * 0.28 * L.s,
-                    y: p.y + Math.cos(lane * 1.4 + i * 0.6) * 0.28 * L.s,
+                    x: p.x + Math.sin(lane * 1.9 + i * 0.7) * 0.38 * L.s,
+                    y: p.y + Math.cos(lane * 1.4 + i * 0.6) * 0.38 * L.s,
                     z: p.z,
-                    region: REGION.CHEST,
+                    region: REGION.CHEST_FLOW,
                     color: colorFlow(),
-                    size: (1.85 + (1 - n) * 0.42) * L.s,
-                    pathT: i / (perFan - 1),
+                    size: (1.02 + this.random() * 0.48) * L.s,
+                    pathT: i / (perBand - 1),
                 }));
             }
         }
+
+        // Downward torso field: short, bowed vertical filaments fade before a common edge.
+        const lowerCount = Math.max(0, budget - bandsPerSide * 2 * perBand);
+        const torsoStrands = 26;
+        const perTorso = Math.max(8, Math.floor(lowerCount / torsoStrands));
+        for (let strand = 0; strand < torsoStrands; strand++) {
+            const xNorm = (strand / (torsoStrands - 1)) * 2 - 1;
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(xNorm * 78 * L.s, L.shoulderCenterY - 13 * L.s, 31 * L.s),
+                new THREE.Vector3(xNorm * 63 * L.s, L.chestCoreY - 17 * L.s, 39 * L.s),
+                new THREE.Vector3(xNorm * 53 * L.s, L.chestCoreY - 48 * L.s, 32 * L.s),
+                new THREE.Vector3(xNorm * 38 * L.s, L.chestBottomY + (this.random() * 12 - 2) * L.s, 22 * L.s),
+            ]);
+            const sampled = curve.getSpacedPoints(perTorso - 1);
+            sampled.forEach((p, i) => {
+                if (this.random() < 0.08 + i / perTorso * 0.12) return;
+                pts.push({
+                    x: p.x + Math.sin(i * 0.47 + strand * 1.3) * 0.7 * L.s,
+                    y: p.y + Math.cos(i * 0.31 + strand) * 0.7 * L.s,
+                    z: p.z + Math.sin(strand * 0.8) * 3.5 * L.s,
+                    region: REGION.CHEST_FLOW,
+                    color: colorCyanStructure(),
+                    size: (0.84 + this.random() * 0.42) * L.s,
+                    pathT: i / Math.max(1, sampled.length - 1),
+                });
+            });
+        }
     }
 
-    addFlowPath(pts, keypoints, count, L, colorFn = colorFlow, size = 1.9) {
+    addFlowPath(pts, keypoints, count, L, colorFn = colorFlow, size = 1.1, region = REGION.CHEST_FLOW) {
         const curve = new THREE.CatmullRomCurve3(keypoints.map(p => new THREE.Vector3(p[0], p[1], p[2])));
         const sampled = curve.getSpacedPoints(Math.max(2, count - 1));
         sampled.forEach((p, i) => {
@@ -845,7 +803,7 @@ class ParticleScene {
                 x: p.x,
                 y: p.y,
                 z: p.z,
-                region: REGION.FLOW,
+                region,
                 color: colorFn(),
                 size: size * L.s,
                 pathT: i / Math.max(1, sampled.length - 1),
@@ -857,33 +815,33 @@ class ParticleScene {
         const s = L.s;
         const pathSpecs = [];
         for (const side of [-1, 1]) {
-            // Luminous filaments sweep down the face and converge into the warm neck.
-            for (let lane = 0; lane < 4; lane++) {
+            // Warm/cyan neural filaments weave from jaw through neck into the sternum.
+            for (let lane = 0; lane < 6; lane++) {
+                const offset = lane * 2.4;
                 pathSpecs.push({ points: [
-                    [side * (5 + lane * 4) * s, L.headCenterY + L.headHalfHeight * 0.62, 55 * s],
-                    [side * (28 + lane * 5) * s, L.headCenterY + L.headHalfHeight * 0.16, 56 * s],
-                    [side * (48 + lane * 2) * s, L.headCenterY - L.headHalfHeight * 0.30, 44 * s],
-                    [side * (20 + lane) * s, L.neckTopY - 10 * s, 40 * s],
-                    [side * (6 + lane * 2) * s, L.chestCoreY + 4 * s, L.chestCoreZ],
-                ], color: lane < 2 ? colorNeckEnergy : colorFlow, size: lane < 2 ? 2.1 : 1.9 });
+                    [side * (9 + offset) * s, L.headCenterY - L.headHalfHeight * (0.53 + lane * 0.025), 44 * s],
+                    [side * (18 + lane) * s, L.neckTopY - 7 * s, 43 * s],
+                    [side * (8 + lane * 1.2) * s, L.neckTopY - 35 * s, 45 * s],
+                    [side * (20 - lane * 1.8) * s, L.neckBottomY + 7 * s, 43 * s],
+                    [side * (3 + lane * 0.5) * s, L.chestCoreY, L.chestCoreZ],
+                ], color: lane < 3 ? colorNeckEnergy : colorFlow, size: 0.95 + lane * 0.035, region: REGION.NECK_FLOW });
             }
 
-            // A few nested chest streams merge with the fan instead of forming a
-            // detached second shoulder wing.
-            for (let lane = 0; lane < 5; lane++) {
-                const n = lane / 4;
+            // Short accents reinforce the energy axis without becoming radial spokes.
+            for (let lane = 0; lane < 4; lane++) {
+                const n = lane / 3;
                 pathSpecs.push({ points: [
-                    [side * (3 + lane) * s, L.chestCoreY, L.chestCoreZ + 2 * s],
-                    [side * (8 + lane * 3) * s, L.chestCoreY + (12 + lane * 2) * s, 47 * s],
-                    [side * (42 + lane * 12) * s, L.shoulderCenterY + (17 - lane) * s, 39 * s],
-                    [side * (105 + n * 68) * s, L.shoulderCenterY - (4 + lane * 5) * s, 16 * s],
-                ], color: colorFlow, size: lane === 0 ? 2.35 : 1.75 });
+                    [side * (2 + lane) * s, L.chestCoreY, L.chestCoreZ + 2 * s],
+                    [side * (19 + lane * 4) * s, L.chestCoreY + (8 + lane * 3) * s, 45 * s],
+                    [side * (52 + lane * 9) * s, L.shoulderCenterY + (10 - lane * 2) * s, 39 * s],
+                    [side * (96 + n * 24) * s, L.shoulderCenterY - (3 + lane * 5) * s, 25 * s],
+                ], color: colorFlow, size: 1.0, region: REGION.CHEST_FLOW });
             }
         }
 
         const perPath = Math.max(8, Math.round(budget / pathSpecs.length));
         for (const spec of pathSpecs) {
-            this.addFlowPath(pts, spec.points, perPath, L, spec.color, spec.size);
+            this.addFlowPath(pts, spec.points, perPath, L, spec.color, spec.size, spec.region);
         }
     }
 
@@ -892,8 +850,8 @@ class ParticleScene {
         for (let i = 0; i < budget; i++) {
             // Uniform-in-volume-ish sampling: cube root of a random radius fraction + random
             // direction gives more points toward the center falling off softly outward.
-            const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
-            const r = Math.cbrt(Math.random());
+            const dir = new THREE.Vector3(this.random() - 0.5, this.random() - 0.5, this.random() - 0.5).normalize();
+            const r = Math.cbrt(this.random());
             const x = cx + dir.x * rx * r;
             const y = cy + dir.y * ry * r;
             const z = cz + dir.z * rz * r;
@@ -903,48 +861,24 @@ class ParticleScene {
 
     genAmbient(pts, budget, L) {
         const s = L.s;
-        const waveBudget = Math.round(budget * 0.52);
-        const scatterBudget = budget - waveBudget;
-        const waveCount = 8;
-        const perWave = Math.max(8, Math.floor(waveBudget / waveCount));
-
-        for (const side of [-1, 1]) {
-            for (let lane = 0; lane < waveCount / 2; lane++) {
-                for (let i = 0; i < perWave; i++) {
-                    const t = i / (perWave - 1);
-                    const x = side * (92 + t * 205) * s;
-                    const y = (L.headCenterY + 8 * s) - t * 105 * s +
-                        Math.sin(t * Math.PI * (2.4 + lane * 0.18) + lane * 0.8) * (8 + lane * 2) * s;
-                    pts.push({
-                        x: x + (Math.random() - 0.5) * 5 * s,
-                        y: y + (Math.random() - 0.5) * 5 * s,
-                        z: (-15 + Math.random() * 22) * s,
-                        region: REGION.AMBIENT,
-                        color: colorAmbient(),
-                        size: (1.4 + Math.random() * 1.1) * s,
-                        pathT: t,
-                    });
-                }
+        for (let i = 0; i < budget; i++) {
+            const zone = this.random();
+            const angle = this.random() * Math.PI * 2;
+            let cx = 0, cy = L.headCenterY, rx = 112 * s, ry = 124 * s;
+            if (zone > 0.48) {
+                cx = (this.random() < 0.5 ? -1 : 1) * 76 * s;
+                cy = L.shoulderCenterY + 12 * s;
+                rx = 93 * s;
+                ry = 68 * s;
             }
-        }
-
-        for (let i = 0; i < scatterBudget; i++) {
-            const crownParticle = Math.random() < 0.62;
-            const angle = Math.random() * Math.PI * 2;
-            const radius = Math.pow(Math.random(), 0.72);
-            const x = crownParticle
-                ? Math.cos(angle) * radius * 95 * s
-                : (Math.random() - 0.5) * 430 * s;
-            const y = crownParticle
-                ? L.headTopY + (Math.random() * 105 - 18) * s
-                : L.shoulderCenterY + (Math.random() - 0.15) * 115 * s;
+            const radius = 0.72 + Math.pow(this.random(), 0.7) * 0.68;
             pts.push({
-                x,
-                y,
-                z: (Math.random() - 0.5) * 100 * s,
+                x: cx + Math.cos(angle) * radius * rx + (this.random() - 0.5) * 10 * s,
+                y: cy + Math.sin(angle) * radius * ry + (this.random() - 0.5) * 10 * s,
+                z: (this.random() - 0.5) * 86 * s,
                 region: REGION.AMBIENT,
                 color: colorAmbient(),
-                size: (1.0 + Math.random() * 1.7) * s,
+                size: (0.65 + this.random() * 1.05) * s,
                 pathT: -1,
             });
         }
@@ -1136,9 +1070,9 @@ class ParticleScene {
             case 'THINKING':
                 headTarget = 1.0; faceTarget = 0.85; break;
             case 'LISTENING':
-                headTarget = 0.35; faceTarget = 0.65; break;
+                headTarget = 0.42; faceTarget = 1.0; break;
             case 'SPEAKING':
-                headTarget = 0.15; faceTarget = 0.5 + this.audioLevel * 0.5; break;
+                headTarget = 0.22; faceTarget = 0.58 + this.audioLevel * 0.42; break;
             default:
                 break;
         }
@@ -1209,13 +1143,16 @@ class ParticleScene {
             const region = meta[idx];
             const seed = meta[idx + 2];
 
-            // Gentle correction back toward the settled shape (recovers from any perturbation).
-            pos[idx] += (target[idx] - pos[idx]) * 0.03;
-            pos[idx + 1] += (target[idx + 1] - pos[idx + 1]) * 0.03;
-            pos[idx + 2] += (target[idx + 2] - pos[idx + 2]) * 0.03;
-
-            const breathAmp = region === REGION.AMBIENT ? 0.15 : 0.45;
-            pos[idx + 1] += Math.sin(t * 0.0008 + seed * 6.2831) * breathAmp * dt;
+            const flowRegion = region === REGION.HEAD_FLOW || region === REGION.NECK_FLOW ||
+                region === REGION.SHOULDER_FLOW || region === REGION.CHEST_FLOW;
+            const motionAmp = flowRegion ? 1.35 : (region === REGION.AMBIENT ? 0.2 : 0.72);
+            const phase = seed * 6.2831;
+            const desiredX = target[idx] + Math.sin(t * 0.00072 + phase) * motionAmp;
+            const desiredY = target[idx + 1] + Math.sin(t * 0.00093 + phase * 1.37) * motionAmp * 0.72;
+            const desiredZ = target[idx + 2] + Math.cos(t * 0.00064 + phase * 0.81) * motionAmp * 0.8;
+            pos[idx] += (desiredX - pos[idx]) * 0.065;
+            pos[idx + 1] += (desiredY - pos[idx + 1]) * 0.065;
+            pos[idx + 2] += (desiredZ - pos[idx + 2]) * 0.065;
 
             if (region === REGION.AMBIENT) {
                 // Slow, irregular free wander — some particles drift out and back in.
@@ -1225,7 +1162,7 @@ class ParticleScene {
                 continue;
             }
 
-            if (thinkSpin && (region === REGION.HEAD || region === REGION.FACE)) {
+            if (thinkSpin && (region === REGION.HEAD_SURFACE || region === REGION.HEAD_FLOW || region === REGION.FACE_STRUCTURE)) {
                 const dx = pos[idx] - 0, dz = pos[idx + 2] - 0;
                 const angle = Math.atan2(dz, dx) + thinkSpin * (0.3 + seed * 0.4);
                 const radius = Math.sqrt(dx * dx + dz * dz);
@@ -1234,18 +1171,20 @@ class ParticleScene {
             }
 
             if (state === 'SPEAKING' && this.audioLevel > 0.02 &&
-                (region === REGION.FACE || region === REGION.NECK || region === REGION.CHEST)) {
+                (region === REGION.FACE_STRUCTURE || region === REGION.FACE_CORE_OUTER ||
+                    region === REGION.FACE_CORE_INNER || region === REGION.NECK_FLOW || region === REGION.CHEST_FLOW)) {
                 const wave = Math.sin(t * 0.012 + seed * 6.2831) * this.audioLevel * 3.5;
                 pos[idx + 1] += wave * dt;
             }
 
-            if (state === 'ERROR' && this.errorFlash > 0.05 && (region === REGION.HEAD || region === REGION.FACE)) {
+            if (state === 'ERROR' && this.errorFlash > 0.05 &&
+                (region === REGION.HEAD_SURFACE || region === REGION.HEAD_FLOW || region === REGION.FACE_STRUCTURE)) {
                 pos[idx] += (Math.random() - 0.5) * this.errorFlash * 1.5;
                 pos[idx + 1] += (Math.random() - 0.5) * this.errorFlash * 1.5;
             }
 
             if (this.burstT > 0.01 &&
-                (region === REGION.CHEST || region === REGION.SHOULDER_L || region === REGION.SHOULDER_R || region === REGION.FLOW)) {
+                (region === REGION.CHEST_FLOW || region === REGION.SHOULDER_FLOW || region === REGION.NECK_FLOW)) {
                 const dx = pos[idx] - 0, dy = pos[idx + 1] - L.chestCoreY, dz = pos[idx + 2] - L.chestCoreZ;
                 const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
                 const push = this.burstT * 4;

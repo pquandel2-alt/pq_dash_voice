@@ -7,18 +7,6 @@
     <style>
         * { margin: 0; padding: 0; }
         html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-        #referenceVisual {
-            display: none;
-        }
-        #referenceVisual.emergencyFallback {
-            display: block; position: fixed; inset: 0;
-            width: 100%; height: 100%; object-fit: contain;
-            animation: emergencyBreathe 3.5s ease-in-out infinite;
-        }
-        @keyframes emergencyBreathe {
-            0%, 100% { transform: scale(0.99); filter: brightness(0.85); }
-            50% { transform: scale(1.012); filter: brightness(1.18); }
-        }
         #canvas, #fallbackCanvas {
             position: relative; z-index: 1;
             display: block; width: 100%; height: 100%;
@@ -49,7 +37,6 @@
     </style>
 </head>
 <body>
-    <img id="referenceVisual" src="images/particle-humanoid-reference.jpg?v=2" alt="">
     <canvas id="canvas"></canvas>
     <canvas id="fallbackCanvas"></canvas>
     <div id="debugInfo"></div>
@@ -84,34 +71,17 @@
         window.addEventListener('DOMContentLoaded', async () => {
             const canvas = document.getElementById('canvas');
             const fallbackCanvas = document.getElementById('fallbackCanvas');
-            const referenceVisual = document.getElementById('referenceVisual');
-            const referenceReady = await new Promise(resolve => {
-                if (referenceVisual.complete) {
-                    resolve(referenceVisual.naturalWidth > 0);
-                    return;
-                }
-                const timeout = setTimeout(() => resolve(false), 5000);
-                referenceVisual.addEventListener('load', () => {
-                    clearTimeout(timeout);
-                    resolve(true);
-                }, { once: true });
-                referenceVisual.addEventListener('error', () => {
-                    clearTimeout(timeout);
-                    resolve(false);
-                }, { once: true });
-            });
             const params = new URLSearchParams(location.search);
             const renderer = params.get('renderer') || 'webgl';
             try {
-                if (!referenceReady) throw new Error('Particle reference image failed to load');
                 if (renderer === 'canvas') {
                     canvas.style.display = 'none';
                     fallbackCanvas.style.display = 'block';
                     window.particleScene = new CanvasParticleScene(fallbackCanvas);
+                    await window.particleScene.prepare();
                 } else {
                     window.particleScene = new ParticleScene(canvas);
                 }
-                window.particleScene.setReferenceImage(referenceVisual);
                 window.particleScene.configure({
                     quality: params.get('quality') || 'AUTO',
                     animationSpeedMultiplier: parseFloat(params.get('speed')) || 1.0,
@@ -121,11 +91,15 @@
                 window.particleScene.start();
                 window.particleScene.setState('ASSEMBLING');
             } catch (error) {
-                // A visible, gently animated last resort is preferable to a black kiosk screen.
+                // Keep the independent procedural Canvas renderer as the last-resort fallback.
                 console.error(`Particle renderer failed: ${error?.stack || error}`);
                 canvas.style.display = 'none';
-                fallbackCanvas.style.display = 'none';
-                referenceVisual.classList.add('emergencyFallback');
+                fallbackCanvas.style.display = 'block';
+                window.particleScene = new CanvasParticleScene(fallbackCanvas);
+                await window.particleScene.prepare();
+                window.particleScene.configure({ quality: 'LOW', assemblyEnabled: true });
+                window.particleScene.start();
+                window.particleScene.setState('ASSEMBLING');
             }
         });
 

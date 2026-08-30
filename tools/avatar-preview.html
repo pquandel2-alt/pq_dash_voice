@@ -1,93 +1,51 @@
 <!doctype html>
-<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Avatar Geometry Preview</title>
-<style>
-html,body{margin:0;background:#05070d;color:#bdefff;font:14px sans-serif;height:100%;overflow:hidden}
-#stage{height:100%;display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:1px;background:#223}
-.pane{position:relative;background:#000;overflow:hidden;aspect-ratio:16/10}.pane>img,.pane>canvas{width:100%;height:100%}.pane>img{object-fit:contain}
-.label{position:absolute;top:12px;left:12px;padding:6px 9px;background:#001a;color:#8ee7ff;border:1px solid #166;z-index:2}
-#controls{position:absolute;right:14px;top:14px;z-index:3;display:flex;gap:8px}button{padding:8px 12px;background:#06263a;color:#bff;border:1px solid #168;cursor:pointer}.active{background:#0b5876}
-</style></head><body>
-<div id="controls"><button data-state="IDLE">IDLE</button><button data-state="LISTENING">LISTENING</button><button data-state="SPEAKING">SPEAKING</button></div>
-<main id="stage"><section class="pane"><span class="label">Stilreferenz – nur Vergleich</span><img src="../app/src/main/assets/images/particle-humanoid-reference.jpg"></section>
-<section class="pane"><span class="label">Exakte App-Geometrie</span><canvas id="preview"></canvas></section></main>
-<script type="module">
-const canvas=document.querySelector('#preview'),ctx=canvas.getContext('2d'); let data,state='IDLE',started=performance.now();
-const resize=()=>{canvas.width=canvas.clientWidth;canvas.height=canvas.clientHeight}; addEventListener('resize',resize);resize();
-data=await fetch('../app/src/main/assets/avatar-geometry.json').then(r=>r.json());
-document.querySelectorAll('button').forEach(b=>b.onclick=()=>{state=b.dataset.state;document.querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));});
-document.querySelector('[data-state=IDLE]').classList.add('active');
-function render(now){
-  const t=(now-started)/1000,w=canvas.width,h=canvas.height;
-  ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);
-  const breatheX=1+Math.sin(t*1.05)*.014;
-  const breatheY=1+Math.sin(t*1.05+.35)*.010;
-  const sway=Math.sin(t*.58)*w*.0045;
-  const listeningEnergy=state==='LISTENING'?.78+.12*Math.sin(t*4.2):0;
-  const speakingBeat=(Math.sin(t*9)+1)*.5;
-  const speakingEnergy=state==='SPEAKING'?(0.35+speakingBeat*.65)*.92:0;
-  const activeCoreEnergy=Math.max(listeningEnergy,speakingEnergy);
-  const glowPulse=1+Math.sin(t*2.35)*.025+activeCoreEnergy*.08;
-  const glowX=w*.06*glowPulse,glowY=h*.12*glowPulse,glowIntensity=.78+activeCoreEnergy*.22;
-  ctx.save();ctx.translate(w*.5,h*.378);ctx.scale(glowX/glowY,1);
-  const coreGradient=ctx.createRadialGradient(0,0,0,0,0,glowY);
-  coreGradient.addColorStop(0,`rgba(255,247,185,${.82*glowIntensity})`);
-  coreGradient.addColorStop(.24,`rgba(255,176,22,${.59*glowIntensity})`);
-  coreGradient.addColorStop(.62,`rgba(255,92,0,${.28*glowIntensity})`);
-  coreGradient.addColorStop(1,'rgba(255,92,0,0)');
-  ctx.fillStyle=coreGradient;ctx.beginPath();ctx.arc(0,0,glowY,0,Math.PI*2);ctx.fill();ctx.restore();
-  const chestPulse=1+Math.sin(t*3.1)*.08,chestX=w*.015*chestPulse,chestY=h*.048*chestPulse;
-  ctx.save();ctx.translate(w*.5,h*.735);ctx.scale(chestX/chestY,1);
-  const chestGradient=ctx.createRadialGradient(0,0,0,0,0,chestY);
-  chestGradient.addColorStop(0,'rgba(220,255,255,.86)');chestGradient.addColorStop(.36,'rgba(0,224,255,.51)');chestGradient.addColorStop(1,'rgba(0,224,255,0)');
-  ctx.fillStyle=chestGradient;ctx.beginPath();ctx.arc(0,0,chestY,0,Math.PI*2);ctx.fill();ctx.restore();
-  const paths=new Map();
-  for(const p of data.particles){
-    const upper=Math.max(.25,Math.min(1,1.15-p.y));
-    let tx=w*.5+(p.x*w-w*.5)*breatheX+sway*upper;
-    let ty=h*.5+(p.y*h-h*.5)*breatheY;
-    const core=p.region==='core';
-    if(core){
-      const corePulse=1+Math.sin(t*2.35)*.032;
-      tx=w*.5+(tx-w*.5)*corePulse;
-      ty=h*.378+(ty-h*.378)*corePulse;
-    }
-    const ox=Math.sin(t*(.72+p.drift*.055)+p.phase)*p.drift;
-    const oy=Math.cos(t*(.61+p.drift*.047)+p.phase)*p.drift;
-    const cycle=(t*.105+p.phase/(Math.PI*2))%1;
-    const release=cycle<.11?Math.sin(cycle/.11*Math.PI):0;
-    const energyWave=Math.sin(t*2.2-p.y*15+p.phase*.16)*1.8;
-    const x=tx+ox+Math.sin(p.phase+t*.85)*release*(8+p.drift*2.2)+energyWave*.45;
-    const y=ty+oy-release*(7+p.drift*2.8)+energyWave;
-    const coreEnergy=core?Math.max(listeningEnergy,speakingEnergy):0;
-    const pulse=.68+.32*Math.sin(t*2.4+p.phase);
-    const alpha=Math.max(.32,Math.min(1,p.brightness*pulse+.18+coreEnergy*.42));
-    const size=p.radius*(.78+.32*((Math.sin(t*2.7+p.phase)+1)*.5))*(1+coreEnergy*.62);
-    if(p.path>=0){
-      const previous=paths.get(p.path);
-      if(previous){
-        const lineAlpha=(p.region==='halo'||p.region==='silhouette'?.70:p.region==='neckShell'?.60:p.region==='core'||p.region==='neckEnergy'||p.region==='flow'?.69:p.region==='shoulder'?.64:p.region==='torso'?.55:p.region==='head'?.46:p.region==='sideWave'?.26:.28)*p.brightness;
-        const lineWidth=p.region==='halo'?2.6:p.region==='silhouette'?2.2:p.region==='neckShell'||p.region==='core'?1.65:p.region==='head'?1.2:p.region==='sideWave'?.8:1.05;
-        const emissive=['halo','silhouette','neckShell','core','neckEnergy','flow','shoulder','torso'].includes(p.region);
-        ctx.lineCap='round';
-        if(emissive){const soft=p.region==='shoulder'||p.region==='torso';ctx.strokeStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${lineAlpha*(soft?.13:.28)})`;ctx.lineWidth=lineWidth*(soft?3:4.6);ctx.beginPath();ctx.moveTo(previous[0],previous[1]);ctx.lineTo(x,y);ctx.stroke();}
-        ctx.strokeStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${lineAlpha})`;ctx.lineWidth=lineWidth;ctx.beginPath();ctx.moveTo(previous[0],previous[1]);ctx.lineTo(x,y);ctx.stroke();
-      }
-      paths.set(p.path,[x,y]);
-    }
-    const structuralGlow=p.region==='halo'||p.region==='silhouette'?.20:p.region==='neckShell'?.14:p.region==='chestCore'?.16:core?.16:0;
-    if(structuralGlow>0){
-      ctx.fillStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${structuralGlow*p.brightness})`;
-      ctx.beginPath();ctx.arc(x,y,size*2.65,0,Math.PI*2);ctx.fill();
-    }
-    if(coreEnergy>.02){
-      ctx.fillStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${coreEnergy*.10})`;
-      ctx.beginPath();ctx.arc(x,y,size*(2.2+coreEnergy*.8),0,Math.PI*2);ctx.fill();
-    }
-    ctx.fillStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${alpha})`;
-    ctx.beginPath();ctx.arc(x,y,size,0,Math.PI*2);ctx.fill();
-  }
-  requestAnimationFrame(render);
-}
-requestAnimationFrame(render);
-</script></body></html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Particle Avatar – Production Renderer Review</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;height:100%;background:#02040a;color:#bdefff;font:14px system-ui,sans-serif;overflow:hidden}
+    header{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;background:#07121d;border-bottom:1px solid #12334a}
+    h1{margin:0;font-size:14px;font-weight:600;letter-spacing:.04em}.controls{display:flex;gap:7px}
+    button{padding:7px 11px;background:#08283b;color:#bff;border:1px solid #176181;border-radius:4px;cursor:pointer}button.active{background:#0d6384;color:#fff}
+    main{height:calc(100% - 52px);display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;gap:1px;background:#173247}
+    section{position:relative;overflow:hidden;background:#000;aspect-ratio:16/10}.label{position:absolute;z-index:3;top:10px;left:10px;padding:5px 8px;background:#001722cc;border:1px solid #165d73}
+    img,iframe,canvas{display:block;width:100%;height:100%;border:0;background:#000}img{object-fit:contain}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Produktiver Renderer · visueller Vergleich · 16:10</h1>
+    <div class="controls">
+      <button data-state="IDLE" class="active">IDLE</button>
+      <button data-state="LISTENING">LISTENING</button>
+      <button data-state="THINKING">THINKING</button>
+      <button data-state="SPEAKING">SPEAKING</button>
+      <button id="assemble">ASSEMBLING</button>
+    </div>
+  </header>
+  <main>
+    <section><span class="label">Stilreferenz · nur Review, kein Runtime-Asset</span><img src="../app/src/main/assets/images/particle-humanoid-reference.jpg" alt="Stilreferenz"></section>
+    <section><span class="label">Produktives particle-screensaver.html · HIGH</span><iframe id="renderer" src="../app/src/main/assets/particle-screensaver.html?quality=HIGH&assembly=0"></iframe></section>
+    <section><span class="label">Aktive native APK-Geometrie · 9.400 Punkte</span><canvas id="native"></canvas></section>
+  </main>
+  <script>
+    const frame=document.querySelector('#renderer');let nativeState='IDLE';
+    function scene(){return frame.contentWindow?.particleScene}
+    document.querySelectorAll('[data-state]').forEach(button=>button.addEventListener('click',()=>{
+      document.querySelectorAll('[data-state]').forEach(x=>x.classList.toggle('active',x===button));
+      scene()?.setState(button.dataset.state);
+      scene()?.setAudioLevel(button.dataset.state==='SPEAKING'?.82:0);
+      nativeState=button.dataset.state;
+    }));
+    document.querySelector('#assemble').addEventListener('click',()=>{
+      const s=scene();if(!s)return;s.config.assemblyEnabled=true;s.reset();s.setState('ASSEMBLING');
+    });
+    const canvas=document.querySelector('#native'),ctx=canvas.getContext('2d');
+    const geometry=fetch('../app/src/main/assets/avatar-geometry.json').then(r=>r.json());
+    function glow(cx,cy,rx,ry,active){ctx.save();ctx.translate(cx,cy);ctx.scale(rx/ry,1);const g=ctx.createRadialGradient(0,0,0,0,0,ry);g.addColorStop(0,`rgba(255,245,180,${.78+active*.18})`);g.addColorStop(.25,'rgba(255,173,24,.58)');g.addColorStop(.66,'rgba(255,90,0,.22)');g.addColorStop(1,'rgba(255,90,0,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,ry,0,Math.PI*2);ctx.fill();ctx.restore()}
+    geometry.then(data=>{const started=performance.now();function draw(now){const dpr=Math.min(devicePixelRatio||1,1.5),w=canvas.clientWidth,h=canvas.clientHeight;if(canvas.width!==w*dpr||canvas.height!==h*dpr){canvas.width=w*dpr;canvas.height=h*dpr}ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);const t=(now-started)/1000,active=nativeState==='LISTENING'?.9:nativeState==='SPEAKING'?.55+.35*(Math.sin(t*9)+1)/2:0;glow(w*.5,h*.378,w*.022*(1+active*.08),h*.085*(1+active*.08),active);for(const p of data.particles){const sway=Math.sin(t*.58)*w*.0045*(1.15-p.y);const x=p.x*w+sway+Math.sin(t*(.72+p.drift*.055)+p.phase)*p.drift*.45;const y=p.y*h+Math.cos(t*(.61+p.drift*.047)+p.phase)*p.drift*.45;const pulse=.74+.26*Math.sin(t*2.4+p.phase),halo={head:.08,shoulder:.10,neck:.08,neckEnergy:.08,flow:.08,torso:.055,aura:.025,core:.16,chestCore:.16}[p.region]||0;ctx.fillStyle=`rgb(${p.color.join(',')})`;if(halo){ctx.globalAlpha=halo*p.brightness;ctx.beginPath();ctx.arc(x,y,Math.max(1,p.radius*2.65),0,Math.PI*2);ctx.fill()}ctx.globalAlpha=Math.max(.18,Math.min(1,p.brightness*pulse+.2));ctx.beginPath();ctx.arc(x,y,Math.max(.5,p.radius*(.72+pulse*.28)),0,Math.PI*2);ctx.fill()}ctx.globalAlpha=1;requestAnimationFrame(draw)}requestAnimationFrame(draw)});
+  </script>
+</body>
+</html>

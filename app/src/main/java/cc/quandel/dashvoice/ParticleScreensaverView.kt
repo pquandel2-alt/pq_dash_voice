@@ -502,6 +502,11 @@ class ParticleScreensaverView @JvmOverloads constructor(
                 "neckShell" -> 0.14f
                 "chestCore" -> 0.16f
                 "core" -> 0.16f
+                "head" -> 0.08f
+                "shoulder" -> 0.10f
+                "neck", "neckEnergy", "flow" -> 0.08f
+                "torso" -> 0.055f
+                "aura" -> 0.025f
                 else -> 0f
             }
             if (structuralGlow > 0f) {
@@ -529,8 +534,8 @@ class ParticleScreensaverView @JvmOverloads constructor(
         val cx = width * 0.5f
         val cy = height * 0.378f
         val pulse = 1f + sin(seconds * 2.35f) * 0.025f + activeEnergy * 0.08f
-        val radiusY = height * 0.12f * pulse
-        val radiusX = width * 0.06f * pulse
+        val radiusY = height * 0.085f * pulse
+        val radiusX = width * 0.022f * pulse
         val intensity = 0.78f + activeEnergy * 0.22f
         coreGlowPaint.shader = RadialGradient(
             cx,
