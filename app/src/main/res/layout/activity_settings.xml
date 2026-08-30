@@ -304,7 +304,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="KI-Partikel-Screensaver"
+            android:text="KI-Partikel-Assist-Avatar"
             android:textSize="16sp"
             android:textStyle="bold" />
 
@@ -313,7 +313,18 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Partikel-Screensaver aktiv (statt Brain-Graph/Uhr)" />
+            android:text="Partikel-Avatar bei Wake Word / Assist anzeigen" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Avatar mindestens anzeigen (HA steuert die tatsächliche Zuhördauer)" />
+        <Spinner
+            android:id="@+id/particleAssistDuration"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" />
 
         <TextView
             android:layout_width="wrap_content"

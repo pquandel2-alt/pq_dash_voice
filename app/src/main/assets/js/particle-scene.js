@@ -20,7 +20,8 @@
 const REGION = {
     HEAD_SURFACE: 0,
     HEAD_FLOW: 1,
-    FACE_STRUCTURE: 2,
+    HEAD_RIM: 2,
+    FACE_STRUCTURE: 2, // compatibility alias for unchanged state-animation branches
     FACE_CORE_OUTER: 3,
     FACE_CORE_INNER: 4,
     NECK_FLOW: 5,
@@ -28,6 +29,13 @@ const REGION = {
     CHEST_FLOW: 7,
     CHEST_CORE: 8,
     AMBIENT: 9,
+    SHOULDER_RIM: 10,
+    SIDE_TRAIL: 11,
+    HEAD_RIM_MAIN: 12,
+    HEAD_RIM_INNER: 13,
+    HEAD_BACK: 14,
+    HEAD_MID: 15,
+    HEAD_FRONT: 16,
 };
 
 // Assembly is hierarchical: each region starts/finishes moving into place within its own
@@ -40,11 +48,18 @@ const REGION_WINDOW = {
     [REGION.HEAD_FLOW]: [0.22, 0.62],
     [REGION.NECK_FLOW]: [0.38, 0.72],
     [REGION.SHOULDER_FLOW]: [0.40, 0.76],
-    [REGION.FACE_STRUCTURE]: [0.48, 0.78],
+    [REGION.HEAD_RIM]: [0.10, 0.52],
     [REGION.CHEST_FLOW]: [0.55, 0.88],
     [REGION.FACE_CORE_OUTER]: [0.62, 0.94],
     [REGION.FACE_CORE_INNER]: [0.78, 1.00],
     [REGION.CHEST_CORE]: [0.80, 1.00],
+    [REGION.SHOULDER_RIM]: [0.40, 0.78],
+    [REGION.SIDE_TRAIL]: [0.00, 0.34],
+    [REGION.HEAD_RIM_MAIN]: [0.12, 0.52],
+    [REGION.HEAD_RIM_INNER]: [0.16, 0.54],
+    [REGION.HEAD_BACK]: [0.08, 0.46],
+    [REGION.HEAD_MID]: [0.12, 0.50],
+    [REGION.HEAD_FRONT]: [0.18, 0.56],
 };
 
 // Head profile: half-width (x) / half-depth (z) as a fraction of the maximum, keyed by
@@ -52,15 +67,20 @@ const REGION_WINDOW = {
 // sphere — width/depth now genuinely depend on height, giving a skull → temple → cheekbone →
 // jaw → chin taper instead of a ball.
 const HEAD_PROFILE = [
-    { h: 1.00, rx: 0.18, rz: 0.30 },
-    { h: 0.90, rx: 0.62, rz: 0.72 },
-    { h: 0.62, rx: 0.91, rz: 0.94 },
-    { h: 0.22, rx: 1.00, rz: 1.00 },
-    { h: -0.18, rx: 0.93, rz: 0.91 },
-    { h: -0.52, rx: 0.79, rz: 0.76 },
-    { h: -0.78, rx: 0.55, rz: 0.56 },
-    { h: -0.94, rx: 0.29, rz: 0.36 },
-    { h: -1.00, rx: 0.16, rz: 0.25 },
+    { h: 1.00, rx: 0.02, rz: 0.12 },
+    { h: 0.93, rx: 0.24, rz: 0.42 },
+    { h: 0.80, rx: 0.52, rz: 0.70 },
+    { h: 0.60, rx: 0.78, rz: 0.90 },
+    { h: 0.40, rx: 0.92, rz: 0.98 },
+    { h: 0.20, rx: 0.98, rz: 1.00 },
+    { h: 0.00, rx: 1.00, rz: 1.00 },
+    { h: -0.04, rx: 0.99, rz: 0.97 },
+    { h: -0.24, rx: 0.95, rz: 0.91 },
+    { h: -0.44, rx: 0.89, rz: 0.83 },
+    { h: -0.64, rx: 0.78, rz: 0.72 },
+    { h: -0.80, rx: 0.64, rz: 0.59 },
+    { h: -0.92, rx: 0.40, rz: 0.40 },
+    { h: -1.00, rx: 0.10, rz: 0.16 },
 ];
 
 function headProfileAt(h) {
@@ -122,6 +142,7 @@ function colorAmbient() {
 const VERTEX_SHADER = `
 attribute vec3 aColor;
 attribute float aSize;
+attribute float aAlpha;
 attribute vec3 aMeta; // x = regionId, y = pathT (flow lines only, else -1), z = noiseSeed 0..1
 
 uniform float uTime;
@@ -144,21 +165,21 @@ void main() {
 
     float twinkle = 0.85 + 0.15 * sin(uTime * (0.6 + seed) + seed * 6.2831);
     float size = aSize;
-    float alpha = 1.0;
+    float alpha = 0.35 + 0.65 * aAlpha;
 
     if (vRegion == 3.0 || vRegion == 4.0) { // FACE CORE, outer + inner
         float pulse = 0.7 + 0.3 * sin(uTime * 1.3 + seed * 6.2831);
         float inner = vRegion == 4.0 ? 1.0 : 0.0;
         size *= (1.0 + uFaceCoreEnergy * (0.48 + inner * 0.42)) * (0.82 + pulse * 0.18);
-        alpha *= (0.28 + inner * 0.34) + 0.32 * pulse;
+        alpha *= (0.48 + inner * 0.18) + 0.20 * pulse;
     } else if (vRegion == 8.0) { // CHEST_CORE
         float pulse = 0.7 + 0.3 * sin(uTime * 1.0 + seed * 6.2831 + 1.5);
         size *= (1.0 + uChestCoreEnergy * 0.8) * pulse;
         alpha *= 0.45 + 0.45 * pulse;
-    } else if (vRegion == 1.0 || vRegion == 5.0 || vRegion == 6.0 || vRegion == 7.0) {
+    } else if (vRegion == 1.0 || vRegion == 5.0 || vRegion == 6.0 || vRegion == 7.0 || vRegion == 10.0 || vRegion == 11.0) {
         float wave = sin(pathT * 12.0 - uTime * 1.8 + seed * 6.2831);
         float glow = smoothstep(0.5, 1.0, wave);
-        alpha *= 0.48 + 0.52 * glow;
+        alpha *= 0.72 + 0.28 * glow;
         size *= 0.82 + 0.42 * glow;
     } else if (vRegion == 9.0) { // AMBIENT
         alpha *= 0.28 * twinkle;
@@ -167,7 +188,13 @@ void main() {
         alpha *= 0.62 + 0.28 * twinkle;
     }
     if (vRegion == 0.0) alpha *= 0.56;
-    if (vRegion == 1.0) alpha *= 1.16;
+    if (vRegion == 1.0) alpha *= 1.28;
+    if (vRegion == 2.0) alpha *= 0.72;
+    if (vRegion == 12.0) alpha *= 1.10;
+    if (vRegion == 13.0) alpha *= 1.02;
+    if (vRegion == 14.0) { alpha *= 0.32; size *= 0.84; }
+    if (vRegion == 15.0) { alpha *= 0.58; size *= 0.92; }
+    if (vRegion == 16.0) alpha *= 0.82;
     if (vRegion == 6.0) {
         float endFade = 1.0 - smoothstep(0.76, 1.0, pathT) * 0.82;
         alpha *= endFade;
@@ -176,17 +203,25 @@ void main() {
     if (aSize > 10.0) alpha *= 0.11;
 
     float frontWeight = smoothstep(-45.0, 58.0, position.z);
-    if (vRegion != 9.0) alpha *= 0.24 + 0.76 * frontWeight;
+    if (vRegion != 9.0) alpha *= 0.68 + 0.32 * frontWeight;
     if (vRegion == 7.0) alpha *= smoothstep(-94.0, -45.0, position.y);
 
     alpha *= 0.75 + 0.25 * uAudioLevel;
     if (uGlowPass > 0.5) {
-        float glowScale = vRegion == 9.0 ? 2.1 : (vRegion == 3.0 || vRegion == 4.0 || vRegion == 8.0 ? 3.5 : 3.0);
+        float glowScale = vRegion == 9.0 ? 2.1 : (vRegion == 3.0 || vRegion == 4.0 || vRegion == 8.0 ? 5.0 : 3.2);
         size *= glowScale;
         float glowAlpha = 0.048;
         if (vRegion == 0.0 || vRegion == 1.0) glowAlpha = 0.12;
+        if (vRegion == 2.0) { glowAlpha = 0.13; size *= 1.70; }
+        if (vRegion == 12.0) { glowAlpha = 0.14; size *= 0.96; }
+        if (vRegion == 13.0) { glowAlpha = 0.10; size *= 0.78; }
+        if (vRegion == 14.0) { glowAlpha = 0.035; size *= 1.10; }
+        if (vRegion == 15.0) { glowAlpha = 0.070; size *= 1.08; }
+        if (vRegion == 16.0) { glowAlpha = 0.105; size *= 1.05; }
         if (vRegion == 6.0) glowAlpha = 0.074;
-        if (vRegion == 3.0 || vRegion == 4.0 || vRegion == 8.0) glowAlpha = 0.085;
+        if (vRegion == 10.0) glowAlpha = 0.105;
+        if (vRegion == 11.0) glowAlpha = 0.035;
+        if (vRegion == 3.0 || vRegion == 4.0 || vRegion == 8.0) glowAlpha = 0.13;
         if (vRegion == 9.0) glowAlpha = 0.040;
         alpha *= glowAlpha;
     }
@@ -220,9 +255,11 @@ void main() {
     float alpha = core * vAlpha;
     if (alpha < 0.015) discard;
 
-    float hotStrength = (vRegion == 3.0 || vRegion == 4.0) ? 0.42 : 0.62;
+    float rim = (vRegion == 2.0 || vRegion == 12.0 || vRegion == 13.0) ? 1.0 : 0.0;
+    float hotStrength = (vRegion == 3.0 || vRegion == 4.0) ? 0.08 : mix(0.62, 0.18, rim);
     vec3 col = vColor + hot * hotStrength;
-    if (vRegion == 0.0 || vRegion == 1.0 || vRegion == 2.0) {
+    if (vRegion == 0.0 || vRegion == 1.0 || vRegion == 2.0 || vRegion == 12.0 ||
+        vRegion == 13.0 || vRegion == 14.0 || vRegion == 15.0 || vRegion == 16.0) {
         col = mix(col, vec3(1.0, 0.28, 0.16), uErrorFlash * 0.55);
     }
     gl_FragColor = vec4(col, alpha);
@@ -281,6 +318,7 @@ class ParticleScene {
         this.glowSystem = null;
         this.layout = null; // anatomical constants from computeLayout()
         this.geometrySeed = 0x5f3759df;
+        this.sharedGeometryData = null;
 
         this.config = {
             quality: 'AUTO',
@@ -300,6 +338,16 @@ class ParticleScene {
         this.lastFrameTime = performance.now();
 
         window.addEventListener('resize', () => this.onWindowResize());
+    }
+
+    /** Loads the deterministic reference-driven target field used by the native APK too. */
+    async prepare() {
+        const response = await fetch('avatar-geometry.json', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Avatar target field HTTP ${response.status}`);
+        this.sharedGeometryData = await response.json();
+        if (!Array.isArray(this.sharedGeometryData?.particles) || !this.sharedGeometryData.particles.length) {
+            throw new Error('Avatar target field is empty');
+        }
     }
 
     /** Muss vor start() aufgerufen werden. opts: {quality, animationSpeedMultiplier, assemblyEnabled, debug} */
@@ -433,52 +481,51 @@ class ParticleScene {
      */
     computeLayout() {
         const s = this.config.headRadius / 80;
-        const chestTopY = 30 * s;
-        const chestBottomY = -96 * s;
-        const neckBottomY = 25 * s;
-        const neckTopY = 96 * s;
-        const headHalfHeight = 80 * s;
-        const headBottomY = neckTopY - 2 * s;
-        const headCenterY = headBottomY + headHalfHeight;
-        const headTopY = headCenterY + headHalfHeight;
-        const shoulderCenterY = chestTopY;
+        const worldHeight = 400 * s;
+        const yWorld = normalizedY => (0.5 - normalizedY) * worldHeight;
+        const headTopY = yWorld(0.165);
+        const headBottomY = yWorld(0.485);
+        const headHalfHeight = (headTopY - headBottomY) / 2;
+        const headCenterY = (headTopY + headBottomY) / 2;
+        const neckTopY = headBottomY;
+        const neckBottomY = yWorld(0.555);
+        const shoulderCenterY = yWorld(0.625);
+        const chestTopY = yWorld(0.535);
+        const chestBottomY = yWorld(0.835);
 
         return {
             s,
             headCenterY,
             headHalfHeight,
-            headHalfWidthMax: 60 * s,
-            headHalfDepthMax: 48 * s,
+            headHalfWidthMax: 45.44 * s,
+            headHalfDepthMax: 16 * s,
             headTopY,
             headBottomY,
             neckTopY,
             neckBottomY,
-            neckHalfWidth: 23 * s,
-            neckHalfDepth: 18 * s,
+            neckHalfWidth: 16 * s,
+            neckHalfDepth: 10 * s,
             shoulderCenterY,
-            shoulderReachX: 136 * s,
-            shoulderDropY: 34 * s,
+            shoulderReachX: 109.82 * s,
+            shoulderDropY: 46 * s,
             chestTopY,
             chestBottomY,
-            chestHalfWidthTop: 124 * s,
-            chestHalfWidthBottom: 70 * s,
-            chestHalfDepth: 46 * s,
-            chestCoreY: -22 * s,
-            chestCoreZ: 43 * s,
-            faceCoreY: headCenterY - headHalfHeight * 0.08,
-            faceCoreZ: 47 * s,
+            chestHalfWidthTop: 95 * s,
+            chestHalfWidthBottom: 35 * s,
+            chestHalfDepth: 18 * s,
+            chestCoreY: yWorld(0.720),
+            chestCoreZ: 8 * s,
+            faceCoreY: yWorld(0.340),
+            faceCoreZ: 8 * s,
         };
     }
 
-    /** Positions/sizes the camera so the whole bust fills ~80% of the screen height. */
+    /** Frames the complete normalized 16:10 target field; WebGL and native pixels now align. */
     frameCamera() {
-        const L = this.layout;
-        const figureHeight = L.headTopY - L.chestBottomY;
-        const figureCenterY = (L.headTopY + L.chestBottomY) / 2;
-        const fillFraction = 0.92;
+        const fieldHeight = 400 * this.layout.s;
         const fovRad = THREE.MathUtils.degToRad(this.camera.fov);
-        const distance = figureHeight / (2 * Math.tan(fovRad / 2) * fillFraction);
-        this.camera.position.set(0, figureCenterY, THREE.MathUtils.clamp(distance, 260, 1400));
+        const distance = fieldHeight / (2 * Math.tan(fovRad / 2));
+        this.camera.position.set(0, 0, THREE.MathUtils.clamp(distance, 260, 1400));
         this.camera.updateProjectionMatrix();
     }
 
@@ -487,24 +534,30 @@ class ParticleScene {
      * hands off to initializeParticles() to pack it into typed arrays / GPU buffers.
      */
     generateTargetGeometry() {
+        if (this.sharedGeometryData?.particles?.length) {
+            this.generateSharedTargetGeometry();
+            return;
+        }
         const L = this.layout;
         const budget = this.config.particleCount;
         this.geometrySeed = 0x5f3759df;
         const pts = [];
 
-        const headSurfaceBudget = Math.round(budget * 0.15);
-        const headFlowBudget = Math.round(budget * 0.27);
-        const faceStructureBudget = Math.round(budget * 0.035);
-        const faceCoreBudget = Math.round(budget * 0.115);
+        const headSurfaceBudget = Math.round(budget * 0.12);
+        const headRimBudget = Math.round(budget * 0.058);
+        const headFlowBudget = Math.round(budget * 0.29);
+        const faceStructureBudget = Math.round(budget * 0.025);
+        const faceCoreBudget = Math.round(budget * 0.14);
         const neckBudget = Math.round(budget * 0.09);
         const shoulderBudget = Math.round(budget * 0.13);
-        const chestBudget = Math.round(budget * 0.14);
-        const chestCoreBudget = Math.round(budget * 0.012);
-        const used = headSurfaceBudget + headFlowBudget + faceStructureBudget + faceCoreBudget +
+        const chestBudget = Math.round(budget * 0.11);
+        const chestCoreBudget = Math.round(budget * 0.015);
+        const used = headSurfaceBudget + headRimBudget + headFlowBudget + faceStructureBudget + faceCoreBudget +
             neckBudget + shoulderBudget + chestBudget + chestCoreBudget;
         const ambientBudget = budget - used;
 
         this.genHeadSurface(pts, headSurfaceBudget, L);
+        this.genHeadRim(pts, headRimBudget, L);
         this.genHeadFlow(pts, headFlowBudget, L);
         this.genFaceEnergy(pts, faceStructureBudget, L);
         this.genNeck(pts, neckBudget, L);
@@ -522,6 +575,57 @@ class ParticleScene {
             pts.push({ ...src, x: src.x + (this.random() - 0.5) * 3, y: src.y + (this.random() - 0.5) * 3, z: src.z + (this.random() - 0.5) * 3 });
         }
         this.targetPoints = pts.slice(0, budget);
+    }
+
+    /** Converts normalized 16:10 target-field coordinates into shallow 2.5D world points. */
+    generateSharedTargetGeometry() {
+        const source = this.sharedGeometryData.particles;
+        const requested = Math.min(this.config.particleCount, source.length);
+        const worldHeight = 400 * this.layout.s;
+        const worldWidth = worldHeight * 1.6;
+        const regionId = particle => {
+            switch (particle.region) {
+                case 'headShell': return REGION.HEAD_SURFACE;
+                case 'headBack': return REGION.HEAD_BACK;
+                case 'headMid': return REGION.HEAD_MID;
+                case 'headFront': return REGION.HEAD_FRONT;
+                case 'headBand': return REGION.HEAD_FLOW;
+                case 'headRimInner': return REGION.HEAD_RIM_INNER;
+                case 'headRimMain': return REGION.HEAD_RIM_MAIN;
+                case 'headRimHalo': return REGION.HEAD_RIM;
+                case 'faceCore': return particle.brightness > 0.72 ? REGION.FACE_CORE_INNER : REGION.FACE_CORE_OUTER;
+                case 'neckEnergy': return REGION.NECK_FLOW;
+                case 'shoulderBand':
+                case 'shoulderSurface': return REGION.SHOULDER_FLOW;
+                case 'shoulderRim': return REGION.SHOULDER_RIM;
+                case 'chestBand': return REGION.CHEST_FLOW;
+                case 'chestCore': return REGION.CHEST_CORE;
+                case 'sideTrail': return REGION.SIDE_TRAIL;
+                default: return REGION.AMBIENT;
+            }
+        };
+        this.targetPoints = new Array(requested);
+        for (let i = 0; i < requested; i++) {
+            const particle = source[Math.floor(i * source.length / requested)];
+            this.targetPoints[i] = {
+                x: (particle.targetX - 0.5) * worldWidth,
+                y: (0.5 - particle.targetY) * worldHeight,
+                z: particle.targetZ * worldHeight,
+                region: regionId(particle),
+                color: new THREE.Color(particle.color[0] / 255, particle.color[1] / 255, particle.color[2] / 255),
+                size: particle.baseSize * 2.08 * this.layout.s * (
+                    particle.region === 'faceCore' ? 0.98 :
+                        particle.region === 'chestCore' ? 1.30 :
+                        particle.region === 'headBand' ? 1.18 :
+                            (particle.region === 'shoulderBand' || particle.region === 'neckEnergy' ||
+                                particle.region === 'chestBand') ? 1.20 : 1.0
+                ),
+                baseAlpha: particle.baseAlpha,
+                pathT: particle.flowT,
+                seed: particle.seed / source.length,
+            };
+        }
+        this.config.particleCount = requested;
     }
 
     genHeadSurface(pts, budget, L) {
@@ -553,7 +657,7 @@ class ParticleScene {
 
     /** Irregular topographic filaments across the frontal skull; open and softly broken. */
     genHeadFlow(pts, budget, L) {
-        const layers = 44;
+        const layers = 62;
         const perLayer = Math.max(18, Math.floor(budget / layers));
         for (let layer = 0; layer < layers; layer++) {
             const baseU = layer / (layers - 1);
@@ -585,61 +689,153 @@ class ParticleScene {
         }
     }
 
-    /** Embedded pear-shaped volumetric energy, layered white-yellow → gold → transparent amber. */
+    /** Glowing neon rim tracing the head silhouette: three-layer glow (core, main, halo). */
+    genHeadRim(pts, budget, L) {
+        const rimCoreBudget = Math.round(budget * 0.15);
+        const rimMainBudget = Math.round(budget * 0.60);
+        const rimHaloBudget = budget - rimCoreBudget - rimMainBudget;
+
+        const layerCount = 56;
+
+        // RIM_CORE: tiny, almost-white, directly on the profile edge
+        const corePerLayer = Math.max(1, Math.floor(rimCoreBudget / layerCount));
+        for (let layer = 0; layer < layerCount; layer++) {
+            const h = 1 - 2 * (layer / (layerCount - 1));
+            const prof = headProfileAt(h);
+            const theta = (this.random() - 0.5) * 0.32 * Math.PI;
+            const xNorm = Math.sin(theta);
+            const rimOffset = (0.92 + this.random() * 0.08) * (prof.rx * L.headHalfWidthMax);
+            const x = xNorm * rimOffset;
+            const z = Math.cos(theta) * prof.rz * L.headHalfDepthMax * (0.98 + this.random() * 0.04);
+            const color = new THREE.Color().setHSL(0.54, 0.95, 0.85 + this.random() * 0.15);
+            pts.push({
+                x, y: L.headCenterY + h * L.headHalfHeight + (this.random() - 0.5) * 1.2 * L.s, z,
+                region: REGION.HEAD_RIM, color,
+                size: (0.28 + this.random() * 0.15) * L.s,
+                pathT: layer / (layerCount - 1),
+            });
+        }
+
+        // RIM_MAIN: electric cyan, outer halo edge
+        const mainPerLayer = Math.max(3, Math.floor(rimMainBudget / layerCount));
+        for (let layer = 0; layer < layerCount; layer++) {
+            const h = 1 - 2 * (layer / (layerCount - 1));
+            const prof = headProfileAt(h);
+            for (let i = 0; i < mainPerLayer; i++) {
+                if (this.random() < 0.12) continue;
+                const theta = (this.random() - 0.5) * 1.2 * Math.PI;
+                const xNorm = Math.sin(theta);
+                const radiusVariance = 1.08 + this.random() * 0.22;
+                const rimOffset = radiusVariance * (prof.rx * L.headHalfWidthMax);
+                const x = xNorm * rimOffset + (this.random() - 0.5) * 1.8 * L.s;
+                const z = Math.cos(theta) * prof.rz * L.headHalfDepthMax * (0.98 + this.random() * 0.06) + (this.random() - 0.5) * 2.1 * L.s;
+                const color = colorCyanStructure();
+                color.multiplyScalar(0.92 + this.random() * 0.12);
+                pts.push({
+                    x, y: L.headCenterY + h * L.headHalfHeight + (this.random() - 0.5) * 1.5 * L.s, z,
+                    region: REGION.HEAD_RIM, color,
+                    size: (0.52 + this.random() * 0.38) * L.s,
+                    pathT: i / Math.max(1, mainPerLayer - 1),
+                });
+            }
+        }
+
+        // RIM_HALO: larger, transparent, soft outer glow
+        const haloPerLayer = Math.max(2, Math.floor(rimHaloBudget / layerCount));
+        for (let layer = 0; layer < layerCount; layer++) {
+            const h = 1 - 2 * (layer / (layerCount - 1));
+            const prof = headProfileAt(h);
+            for (let i = 0; i < haloPerLayer; i++) {
+                if (this.random() < 0.18) continue;
+                const theta = (this.random() - 0.5) * 1.6 * Math.PI;
+                const xNorm = Math.sin(theta);
+                const radiusVariance = 1.24 + this.random() * 0.36;
+                const rimOffset = radiusVariance * (prof.rx * L.headHalfWidthMax);
+                const x = xNorm * rimOffset + (this.random() - 0.5) * 3.2 * L.s;
+                const z = Math.cos(theta) * prof.rz * L.headHalfDepthMax * (0.96 + this.random() * 0.08) + (this.random() - 0.5) * 3.6 * L.s;
+                const color = colorCyanStructure();
+                color.multiplyScalar(0.58 + this.random() * 0.18);
+                pts.push({
+                    x, y: L.headCenterY + h * L.headHalfHeight + (this.random() - 0.5) * 2.0 * L.s, z,
+                    region: REGION.HEAD_RIM, color,
+                    size: (0.84 + this.random() * 0.52) * L.s,
+                    pathT: i / Math.max(1, haloPerLayer - 1),
+                    baseAlpha: 0.52 + this.random() * 0.28,
+                });
+            }
+        }
+    }
+
+    /** Embedded pear-shaped volumetric energy, layered white-yellow → gold → amber → inner hot spot. */
     genFaceCore(pts, budget, L) {
-        const outerBudget = Math.round(budget * 0.54);
-        const middleBudget = Math.round(budget * 0.38);
-        const innerBudget = budget - outerBudget - middleBudget;
-        const addLayer = (count, scale, region, intensityMin) => {
+        const outerBudget = Math.round(budget * 0.26);
+        const midBudget = Math.round(budget * 0.32);
+        const innerBudget = Math.round(budget * 0.28);
+        const hotBudget = budget - outerBudget - midBudget - innerBudget;
+
+        const addLayer = (count, scale, region, intensityMin, sizeScale = 1.0) => {
             for (let i = 0; i < count; i++) {
                 const ny = this.random() * 2 - 1;
                 const profileWidth = (0.64 + 0.36 * (1 - ny * ny)) * (ny > 0 ? 0.78 + 0.22 * (1 - ny) : 1.0);
                 const angle = this.random() * Math.PI * 2;
-                const radius = Math.sqrt(this.random());
-                const x = Math.cos(angle) * radius * 25 * scale * profileWidth * L.s;
-                const y = L.faceCoreY + ny * 36 * scale * L.s + Math.sin(angle * 2.0) * 1.2 * L.s;
+                const radius = Math.cbrt(this.random());
+                const x = Math.cos(angle) * radius * 32 * scale * profileWidth * L.s + (this.random() - 0.5) * 2 * L.s;
+                const y = L.faceCoreY + ny * 42 * scale * L.s + Math.sin(angle * 2.0) * 1.8 * L.s + (this.random() - 0.5) * 1.5 * L.s;
                 const depth = Math.sin(angle) * radius;
-                const z = L.faceCoreZ - 3 * L.s + depth * 8 * scale * L.s + (1 - radius) * 4 * L.s;
+                const z = L.faceCoreZ - 4 * L.s + depth * 10 * scale * L.s + (1 - radius) * 5 * L.s + (this.random() - 0.5) * 1.2 * L.s;
                 const intensity = intensityMin + (1 - radius) * (1 - intensityMin);
                 const color = colorFaceCore(intensity);
-                if (region === REGION.FACE_CORE_INNER && intensity > 0.90) color.lerp(new THREE.Color(0xfff4bd), 0.42);
+                if (region === REGION.FACE_CORE_INNER && intensity > 0.88) {
+                    color.lerp(new THREE.Color(0xfff9e6), 0.38);
+                }
                 pts.push({
                     x, y, z, region, color,
-                    size: ((region === REGION.FACE_CORE_INNER ? 1.18 : 0.95) + this.random() * 0.65) * L.s,
+                    size: ((0.88 + this.random() * 0.72) * sizeScale) * L.s,
                     pathT: ny * 0.5 + 0.5,
+                    baseAlpha: 0.72 + this.random() * 0.22,
                 });
             }
         };
-        addLayer(outerBudget, 1.0, REGION.FACE_CORE_OUTER, 0.18);
-        addLayer(middleBudget, 0.72, REGION.FACE_CORE_OUTER, 0.42);
-        addLayer(innerBudget, 0.22, REGION.FACE_CORE_INNER, 0.76);
 
+        // Outer layer: amber/orange diffuse cloud
+        addLayer(outerBudget, 1.0, REGION.FACE_CORE_OUTER, 0.12, 1.1);
+        // Middle layer: warmer orange/gold transition
+        addLayer(midBudget, 0.68, REGION.FACE_CORE_OUTER, 0.38, 0.95);
+        // Inner layer: gold/white transition
+        addLayer(innerBudget, 0.32, REGION.FACE_CORE_INNER, 0.68, 0.82);
+        // Hot center: tiny bright white hot spots
+        addLayer(hotBudget, 0.08, REGION.FACE_CORE_INNER, 0.92, 0.55);
+
+        // Subtle radiant accent halo (embedded in head, not floating)
         for (const halo of [
-            { size: 58, color: 0xff6f12, z: -5 },
-            { size: 39, color: 0xff941d, z: -2 },
-            { size: 23, color: 0xffbd42, z: 1 },
+            { size: 48, color: 0xff8822, z: -6, intensity: 0.5 },
+            { size: 32, color: 0xffaa33, z: -2, intensity: 0.65 },
+            { size: 18, color: 0xffdd66, z: 2, intensity: 0.82 },
         ]) {
             pts.push({
                 x: 0, y: L.faceCoreY, z: L.faceCoreZ + halo.z * L.s,
                 region: REGION.FACE_CORE_OUTER,
-                color: new THREE.Color(halo.color),
+                color: colorFaceCore(halo.intensity),
                 size: halo.size * L.s,
                 pathT: 0.5,
+                baseAlpha: 0.45,
             });
         }
 
-        // A few warm, open filaments bind the cloud into the cyan face surface.
-        const filamentCount = Math.max(6, Math.floor(budget * 0.025));
+        // Warm filaments that bind the core to the cyan face surface
+        const filamentCount = Math.max(8, Math.floor(budget * 0.032));
         for (let i = 0; i < filamentCount; i++) {
             const t = i / Math.max(1, filamentCount - 1);
+            const wiggle = Math.sin(t * Math.PI * 3.8) * 8 * (1 - Math.abs(t - 0.5)) * L.s;
             pts.push({
-                x: Math.sin(t * Math.PI * 3.2) * 7 * (1 - Math.abs(t - 0.5)) * L.s,
-                y: L.faceCoreY + (t - 0.5) * 54 * L.s,
-                z: L.faceCoreZ + 4 * L.s,
+                x: wiggle + (this.random() - 0.5) * 1.5 * L.s,
+                y: L.faceCoreY + (t - 0.5) * 48 * L.s,
+                z: L.faceCoreZ + 2 * L.s + (this.random() - 0.5) * 1.2 * L.s,
                 region: REGION.FACE_CORE_INNER,
-                color: colorFaceCore(0.82 + this.random() * 0.18),
-                size: 1.25 * L.s,
+                color: colorFaceCore(0.76 + this.random() * 0.24),
+                size: (1.08 + this.random() * 0.24) * L.s,
                 pathT: t,
+                baseAlpha: 0.68,
             });
         }
     }
@@ -905,6 +1101,7 @@ class ParticleScene {
         this.meta = new Float32Array(n * 3);
         const colors = new Float32Array(n * 3);
         const sizes = new Float32Array(n);
+        const alphas = new Float32Array(n);
 
         for (let i = 0; i < n; i++) {
             const p = this.targetPoints[i];
@@ -924,12 +1121,13 @@ class ParticleScene {
 
             this.meta[idx] = p.region;
             this.meta[idx + 1] = p.pathT;
-            this.meta[idx + 2] = Math.random();
+            this.meta[idx + 2] = p.seed ?? this.random();
 
             colors[idx] = p.color.r;
             colors[idx + 1] = p.color.g;
             colors[idx + 2] = p.color.b;
             sizes[i] = p.size;
+            alphas[i] = p.baseAlpha ?? 1;
         }
 
         if (settled) {
@@ -945,6 +1143,7 @@ class ParticleScene {
         geometry.setAttribute('position', posAttr);
         geometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
         geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+        geometry.setAttribute('aAlpha', new THREE.BufferAttribute(alphas, 1));
         geometry.setAttribute('aMeta', new THREE.BufferAttribute(this.meta, 3));
         this.particleGeometry = geometry;
 
@@ -1056,7 +1255,7 @@ class ParticleScene {
 
         // Frontal view stays the primary view — only a very small organic sway, no
         // continuous spin (per design: this is a face-forward holographic bust).
-        this.particleSystem.rotation.y = Math.sin(this.elapsedTime * 0.00015) * THREE.MathUtils.degToRad(3);
+        this.particleSystem.rotation.y = Math.sin(this.elapsedTime * 0.00015) * THREE.MathUtils.degToRad(1.2);
         this.glowSystem.rotation.y = this.particleSystem.rotation.y;
     }
 
@@ -1162,7 +1361,9 @@ class ParticleScene {
                 continue;
             }
 
-            if (thinkSpin && (region === REGION.HEAD_SURFACE || region === REGION.HEAD_FLOW || region === REGION.FACE_STRUCTURE)) {
+            if (thinkSpin && (region === REGION.HEAD_SURFACE || region === REGION.HEAD_BACK ||
+                region === REGION.HEAD_MID || region === REGION.HEAD_FRONT || region === REGION.HEAD_FLOW ||
+                region === REGION.FACE_STRUCTURE || region === REGION.HEAD_RIM_MAIN || region === REGION.HEAD_RIM_INNER)) {
                 const dx = pos[idx] - 0, dz = pos[idx + 2] - 0;
                 const angle = Math.atan2(dz, dx) + thinkSpin * (0.3 + seed * 0.4);
                 const radius = Math.sqrt(dx * dx + dz * dz);
@@ -1171,14 +1372,17 @@ class ParticleScene {
             }
 
             if (state === 'SPEAKING' && this.audioLevel > 0.02 &&
-                (region === REGION.FACE_STRUCTURE || region === REGION.FACE_CORE_OUTER ||
+                (region === REGION.FACE_STRUCTURE || region === REGION.HEAD_RIM_MAIN ||
+                    region === REGION.HEAD_RIM_INNER || region === REGION.FACE_CORE_OUTER ||
                     region === REGION.FACE_CORE_INNER || region === REGION.NECK_FLOW || region === REGION.CHEST_FLOW)) {
                 const wave = Math.sin(t * 0.012 + seed * 6.2831) * this.audioLevel * 3.5;
                 pos[idx + 1] += wave * dt;
             }
 
             if (state === 'ERROR' && this.errorFlash > 0.05 &&
-                (region === REGION.HEAD_SURFACE || region === REGION.HEAD_FLOW || region === REGION.FACE_STRUCTURE)) {
+                (region === REGION.HEAD_SURFACE || region === REGION.HEAD_BACK || region === REGION.HEAD_MID ||
+                    region === REGION.HEAD_FRONT || region === REGION.HEAD_FLOW ||
+                    region === REGION.FACE_STRUCTURE || region === REGION.HEAD_RIM_MAIN || region === REGION.HEAD_RIM_INNER)) {
                 pos[idx] += (Math.random() - 0.5) * this.errorFlash * 1.5;
                 pos[idx + 1] += (Math.random() - 0.5) * this.errorFlash * 1.5;
             }

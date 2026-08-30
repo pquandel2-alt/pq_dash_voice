@@ -56,6 +56,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
     private var particles: List<Particle> = emptyList()
     private var running = false
     private var assemblyEnabled = true
+    private var assemblyInProgress = false
     private var assemblyStartedAt = 0L
     private var animationStartedAt = 0L
     private var animationSpeed = 1f
@@ -81,6 +82,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
         running = true
         animationStartedAt = System.currentTimeMillis()
         currentState = if (assemble) ParticleState.ASSEMBLING else ParticleState.IDLE
+        assemblyInProgress = assemble
         resetAssembly()
         visibility = VISIBLE
         postInvalidateOnAnimation()
@@ -94,11 +96,14 @@ class ParticleScreensaverView @JvmOverloads constructor(
     fun setParticleState(state: ParticleState) {
         // The always-streaming satellite can emit IDLE while the entrance animation is still
         // running. Do not let that event snap all particles straight to the finished portrait.
-        if (state == ParticleState.IDLE && currentState == ParticleState.ASSEMBLING &&
+        if (state == ParticleState.IDLE && assemblyInProgress &&
             System.currentTimeMillis() - assemblyStartedAt < ASSEMBLY_DURATION_MS
         ) return
         currentState = state
-        if (state == ParticleState.ASSEMBLING) resetAssembly()
+        if (state == ParticleState.ASSEMBLING) {
+            assemblyInProgress = assemblyEnabled
+            resetAssembly()
+        }
         if (running) postInvalidateOnAnimation()
     }
 
@@ -374,24 +379,29 @@ class ParticleScreensaverView @JvmOverloads constructor(
             return
         }
 
+        var rawAssembly = 1f
         var assembly = 1f
-        if (currentState == ParticleState.ASSEMBLING && assemblyEnabled) {
+        if (assemblyInProgress && assemblyEnabled) {
             val raw = ((now - assemblyStartedAt) /
                 (ASSEMBLY_DURATION_MS / animationSpeed)).coerceIn(0f, 1f)
+            rawAssembly = raw
             assembly = if (raw < 0.5f) {
                 4f * raw * raw * raw
             } else {
                 1f - (-2f * raw + 2f).pow(3) / 2f
             }
-            if (raw >= 1f) currentState = ParticleState.IDLE
+            if (raw >= 1f) {
+                assemblyInProgress = false
+                if (currentState == ParticleState.ASSEMBLING) currentState = ParticleState.IDLE
+            }
         }
 
         val centerX = width * 0.5f
         val centerY = height * 0.5f
         // Whole-body breathing and a tiny head-led sway make the silhouette feel inhabited.
-        val breatheX = 1f + sin(seconds * 1.05f) * 0.014f
-        val breatheY = 1f + sin(seconds * 1.05f + 0.35f) * 0.010f
-        val bodySway = sin(seconds * 0.58f) * width * 0.0045f
+        val breatheX = 1f + sin(seconds * 1.05f) * 0.004f
+        val breatheY = 1f + sin(seconds * 1.05f + 0.35f) * 0.003f
+        val bodySway = sin(seconds * 0.58f) * width * 0.002f
         val speaking = if (currentState == ParticleState.SPEAKING) audioLevel else 0f
         val listeningEnergy = if (currentState == ParticleState.LISTENING) {
             0.78f + 0.12f * sin(seconds * 4.2f)
@@ -415,31 +425,35 @@ class ParticleScreensaverView @JvmOverloads constructor(
             val red = Color.red(particle.color)
             val green = Color.green(particle.color)
             val blue = Color.blue(particle.color)
-            val warmCore = particle.region == "core"
+            val warmCore = particle.region == "faceCore"
             if (warmCore) {
-                val faceCenterY = height * 0.378f
+                val faceCenterY = height * 0.335f
                 val corePulse = 1f + sin(seconds * 2.35f) * 0.032f
                 targetX = centerX + (targetX - centerX) * corePulse
                 targetY = faceCenterY + (targetY - faceCenterY) * corePulse
             }
             val x: Float
             val y: Float
-            if (assembly < 1f) {
+            val particleAssembly = if (assembly < 1f) {
+                regionAssembly(rawAssembly, particle.region)
+            } else 1f
+            if (particleAssembly < 1f) {
                 // A curved stream is visibly different from a flat cross-fade into the image.
-                val stream = sin(particle.phase + assembly * PI.toFloat() * 3f) *
-                    (1f - assembly) * width * 0.055f
-                x = particle.startX + (targetX - particle.startX) * assembly + stream
-                y = particle.startY + (targetY - particle.startY) * assembly -
-                    cos(particle.phase + assembly * PI.toFloat() * 2f) *
-                    (1f - assembly) * height * 0.035f
+                val stream = sin(particle.phase + particleAssembly * PI.toFloat() * 3f) *
+                    (1f - particleAssembly) * width * 0.055f
+                x = particle.startX + (targetX - particle.startX) * particleAssembly + stream
+                y = particle.startY + (targetY - particle.startY) * particleAssembly -
+                    cos(particle.phase + particleAssembly * PI.toFloat() * 2f) *
+                    (1f - particleAssembly) * height * 0.035f
             } else {
                 // Every particle has its own orbit. A small rolling subset detaches farther from
                 // the body and returns, so motion stays obvious without destroying the silhouette.
                 val orbitX = sin(seconds * (0.72f + particle.drift * 0.055f) + particle.phase) * particle.drift
                 val orbitY = cos(seconds * (0.61f + particle.drift * 0.047f) + particle.phase) * particle.drift
-                val energyWave = sin(seconds * 2.2f - normalizedY * 15f + particle.phase * 0.16f) * 1.8f
+                val energyWave = sin(seconds * 2.2f - normalizedY * 15f + particle.phase * 0.16f) * 0.65f
                 val cycle = (seconds * 0.105f + particle.phase / (PI.toFloat() * 2f)) % 1f
-                val release = if (cycle < 0.11f) sin(cycle / 0.11f * PI.toFloat()) else 0f
+                val mayDetach = particle.region == "ambient" || particle.region == "sideTrail"
+                val release = if (mayDetach && cycle < 0.11f) sin(cycle / 0.11f * PI.toFloat()) else 0f
                 val releaseX = sin(particle.phase + seconds * 0.85f) * release * (8f + particle.drift * 2.2f)
                 val releaseY = -release * (7f + particle.drift * 2.8f)
                 x = targetX + orbitX + releaseX + energyWave * 0.45f
@@ -498,15 +512,23 @@ class ParticleScreensaverView @JvmOverloads constructor(
                 pathY[particle.path] = y
             }
             val structuralGlow = when (particle.region) {
-                "halo", "silhouette" -> 0.20f
-                "neckShell" -> 0.14f
-                "chestCore" -> 0.16f
-                "core" -> 0.16f
-                "head" -> 0.08f
-                "shoulder" -> 0.10f
-                "neck", "neckEnergy", "flow" -> 0.08f
-                "torso" -> 0.055f
-                "aura" -> 0.025f
+                "headRimHalo" -> 0.18f
+                "headRimMain" -> 0.20f
+                "headRimInner" -> 0.08f
+                "faceCore" -> 0.18f
+                "headBand" -> 0.16f
+                "headShell" -> 0.055f
+                "headBack" -> 0.025f
+                "headMid" -> 0.055f
+                "headFront" -> 0.095f
+                "shoulderRim" -> 0.10f
+                "shoulderBand" -> 0.085f
+                "shoulderSurface" -> 0.045f
+                "neckEnergy" -> 0.12f
+                "chestBand" -> 0.075f
+                "chestCore" -> 0.18f
+                "sideTrail" -> 0.035f
+                "ambient" -> 0.025f
                 else -> 0f
             }
             if (structuralGlow > 0f) {
@@ -530,24 +552,47 @@ class ParticleScreensaverView @JvmOverloads constructor(
         postInvalidateDelayed(33L)
     }
 
+    /** Staged assembly keeps the established state contract while giving the new target field
+     * a readable build order: aura/body → rim/bands → shoulders → neck/core → chest node. */
+    private fun regionAssembly(progress: Float, region: String): Float {
+        val window = when (region) {
+            "ambient", "sideTrail" -> 0.00f to 0.34f
+            "headShell", "headBack", "headMid", "headFront",
+            "headRimHalo", "headRimMain", "headRimInner" -> 0.08f to 0.52f
+            "headBand" -> 0.22f to 0.64f
+            "shoulderSurface", "shoulderBand", "shoulderRim" -> 0.38f to 0.78f
+            "neckEnergy", "chestBand" -> 0.50f to 0.86f
+            "faceCore" -> 0.66f to 0.96f
+            "chestCore" -> 0.80f to 1.00f
+            else -> 0.20f to 0.85f
+        }
+        val local = ((progress - window.first) / (window.second - window.first)).coerceIn(0f, 1f)
+        return if (local < 0.5f) {
+            4f * local * local * local
+        } else {
+            1f - (-2f * local + 2f).pow(3) / 2f
+        }
+    }
+
     private fun drawCoreGlow(canvas: Canvas, seconds: Float, activeEnergy: Float) {
         val cx = width * 0.5f
-        val cy = height * 0.378f
+        val cy = height * 0.340f
         val pulse = 1f + sin(seconds * 2.35f) * 0.025f + activeEnergy * 0.08f
-        val radiusY = height * 0.085f * pulse
-        val radiusX = width * 0.022f * pulse
+        val radiusY = height * 0.088f * pulse
+        val radiusX = width * 0.048f * pulse
         val intensity = 0.78f + activeEnergy * 0.22f
         coreGlowPaint.shader = RadialGradient(
             cx,
             cy,
             radiusY,
             intArrayOf(
-                Color.argb((210 * intensity).toInt(), 255, 247, 185),
-                Color.argb((150 * intensity).toInt(), 255, 176, 22),
-                Color.argb((70 * intensity).toInt(), 255, 92, 0),
+                Color.argb((174 * intensity).toInt(), 255, 244, 180),
+                Color.argb((230 * intensity).toInt(), 255, 185, 28),
+                Color.argb((224 * intensity).toInt(), 255, 82, 0),
+                Color.argb((115 * intensity).toInt(), 255, 40, 0),
                 Color.TRANSPARENT,
             ),
-            floatArrayOf(0f, 0.24f, 0.62f, 1f),
+            floatArrayOf(0f, 0.06f, 0.35f, 0.74f, 1f),
             Shader.TileMode.CLAMP,
         )
         canvas.save()
@@ -559,7 +604,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
 
     private fun drawChestGlow(canvas: Canvas, seconds: Float) {
         val cx = width * 0.5f
-        val cy = height * 0.735f
+        val cy = height * 0.720f
         val pulse = 1f + sin(seconds * 3.1f) * 0.08f
         val radiusY = height * 0.048f * pulse
         val radiusX = width * 0.015f * pulse

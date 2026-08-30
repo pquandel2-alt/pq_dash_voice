@@ -32,6 +32,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import cc.quandel.dashvoice.particle.ParticleAssistantController
+import cc.quandel.dashvoice.particle.ParticleAssistTiming
+import cc.quandel.dashvoice.particle.ParticleState
 import cc.quandel.dashvoice.util.AppLog
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -70,6 +72,8 @@ class MainActivity : AppCompatActivity() {
 
     private var sensorFetcher: HaSensorFetcher? = null
     private var particleController: ParticleAssistantController? = null
+    private var particleAssistActive = false
+    private var particleAssistShownAt = 0L
 
     private lateinit var doorbellOverlay: View
     private lateinit var doorbellWebView: WebView
@@ -79,6 +83,7 @@ class MainActivity : AppCompatActivity() {
     private val ui = Handler(Looper.getMainLooper())
 
     private val dismissDoorbell = Runnable { hideDoorbell() }
+    private val hideParticleAssist = Runnable { hideParticleAssistant() }
 
     private val showSaver = Runnable { showScreensaver() }
     private val periodicReload = object : Runnable {
@@ -305,6 +310,8 @@ class MainActivity : AppCompatActivity() {
         private const val CLOCK_ENTITY_POLL_MS = 15_000L
         private const val DOORBELL_ENTITY_POLL_MS = 1_000L
         private const val DOORBELL_STALE_MS = 10L * 60 * 1000  // danach vor dem Anzeigen neu laden statt nur zu resumen
+        private const val COMPLETION_HOLD_MS = 1_200L
+        private const val IDLE_HOLD_MS = 500L
     }
 
     /** Fragt einmalig den Zustand einer HA-Entität per REST ab (Ergebnis kommt im Main-Thread an). */
@@ -368,14 +375,7 @@ class MainActivity : AppCompatActivity() {
             val screensaverActive = screensaver.visibility == View.VISIBLE
 
             if (screensaverActive && prefs.enableParticleScreensaver) {
-                // Screensaver aktiv → Partikel als Voice-UI verwenden
-                particleScreensaverView.setParticleState(
-                    cc.quandel.dashvoice.particle.ParticleState.LISTENING
-                )
-                particleController?.transitionTo(
-                    cc.quandel.dashvoice.particle.ParticleState.LISTENING
-                )
-                AppLog.i("UI", "Wake detected during particle screensaver → LISTENING")
+                showParticleAssistant()
             } else {
                 // Dashboard aktiv → klassisches Voice-Overlay
                 if (screensaverActive) {
@@ -396,12 +396,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         VoiceEvents.onTranscript = { text ->
-            particleScreensaverView.setParticleState(
-                cc.quandel.dashvoice.particle.ParticleState.THINKING
-            )
-            particleController?.transitionTo(
-                cc.quandel.dashvoice.particle.ParticleState.THINKING
-            )
+            setParticleAssistantState(ParticleState.THINKING)
+            particleController?.transitionTo(ParticleState.THINKING)
             if (prefs.particleShowTranscript) particleController?.setTranscript(text)
             if (text.isNotEmpty()) {
                 voiceTranscriptText.text = text
@@ -412,12 +408,8 @@ class MainActivity : AppCompatActivity() {
             voiceAnimation.setState(VoiceAnimationView.State.THINKING)
         }
         VoiceEvents.onResponse = { text ->
-            particleScreensaverView.setParticleState(
-                cc.quandel.dashvoice.particle.ParticleState.SPEAKING
-            )
-            particleController?.transitionTo(
-                cc.quandel.dashvoice.particle.ParticleState.SPEAKING
-            )
+            setParticleAssistantState(ParticleState.SPEAKING)
+            particleController?.transitionTo(ParticleState.SPEAKING)
             if (prefs.particleShowResponse) particleController?.setResponse(text)
             if (text.isNotEmpty()) {
                 voiceResponseText.text = text
@@ -433,12 +425,8 @@ class MainActivity : AppCompatActivity() {
         }
         VoiceEvents.onCommandDone = { _ ->
             // Sofortbefehl ausgeführt: grüne „Erledigt"-Animation kurz zeigen, dann ausblenden (stumm).
-            particleScreensaverView.setParticleState(
-                cc.quandel.dashvoice.particle.ParticleState.SUCCESS
-            )
-            particleController?.transitionTo(
-                cc.quandel.dashvoice.particle.ParticleState.SUCCESS
-            )
+            setParticleAssistantState(ParticleState.SUCCESS)
+            particleController?.transitionTo(ParticleState.SUCCESS)
             particleController?.setTranscript(null)
             particleController?.setResponse(null)
             stopMicPulse()
@@ -459,6 +447,8 @@ class MainActivity : AppCompatActivity() {
                         voiceOverlay.alpha = 1f
                     }
                     .start()
+            } else {
+                scheduleParticleAssistantHide(COMPLETION_HOLD_MS)
             }
             resetScreensaverTimer()
         }
@@ -504,12 +494,8 @@ class MainActivity : AppCompatActivity() {
             resetScreensaverTimer()
         }
         VoiceEvents.onIdle = {
-            particleScreensaverView.setParticleState(
-                cc.quandel.dashvoice.particle.ParticleState.IDLE
-            )
-            particleController?.transitionTo(
-                cc.quandel.dashvoice.particle.ParticleState.IDLE
-            )
+            setParticleAssistantState(ParticleState.IDLE)
+            particleController?.transitionTo(ParticleState.IDLE)
             particleController?.setTranscript(null)
             particleController?.setResponse(null)
             stopMicPulse()
@@ -526,6 +512,8 @@ class MainActivity : AppCompatActivity() {
                         voiceOverlay.alpha = 1f
                     }
                     .start()
+            } else {
+                scheduleParticleAssistantHide(IDLE_HOLD_MS)
             }
             resetScreensaverTimer()
         }
@@ -564,6 +552,60 @@ class MainActivity : AppCompatActivity() {
         micPulseAnimator?.cancel()
         micPulseAnimator = null
         voiceMicIcon.alpha = 1f
+    }
+
+    /** Blendet den Avatar nur für die laufende Assist-Interaktion über dem Screensaver ein. */
+    private fun showParticleAssistant() {
+        ui.removeCallbacks(hideParticleAssist)
+        particleAssistActive = true
+        particleAssistShownAt = System.currentTimeMillis()
+        particleScreensaverView.bringToFront()
+        particleScreensaverView.start(
+            prefs.particleAssemblyAnimEnabled,
+            prefs.particleAnimationSpeed,
+        )
+        particleScreensaverView.setParticleState(ParticleState.LISTENING)
+        particleController?.transitionTo(ParticleState.LISTENING)
+        val lp = window.attributes
+        lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = lp
+        AppLog.i(
+            "UI",
+            "Wake Word → Partikel-Avatar mindestens ${prefs.particleAssistMinVisibleMs} ms sichtbar",
+        )
+    }
+
+    private fun setParticleAssistantState(state: ParticleState) {
+        if (!particleAssistActive) return
+        ui.removeCallbacks(hideParticleAssist)
+        particleScreensaverView.setParticleState(state)
+    }
+
+    private fun scheduleParticleAssistantHide(completionHoldMs: Long) {
+        if (!particleAssistActive) return
+        ui.removeCallbacks(hideParticleAssist)
+        val delay = ParticleAssistTiming.hideDelayMs(
+            shownAtMs = particleAssistShownAt,
+            nowMs = System.currentTimeMillis(),
+            minimumVisibleMs = prefs.particleAssistMinVisibleMs,
+            completionHoldMs = completionHoldMs,
+        )
+        ui.postDelayed(hideParticleAssist, delay)
+        AppLog.i("UI", "Partikel-Avatar endet in ${delay} ms; normaler Screensaver folgt")
+    }
+
+    private fun hideParticleAssistant() {
+        if (!particleAssistActive) return
+        particleAssistActive = false
+        particleScreensaverView.stop()
+        val lp = window.attributes
+        lp.screenBrightness = if (clockBlock.visibility == View.VISIBLE) {
+            0.03f
+        } else {
+            WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        }
+        window.attributes = lp
+        AppLog.i("UI", "Partikel-Avatar beendet → normaler Screensaver sichtbar")
     }
 
     private fun refreshLog() {
@@ -642,25 +684,12 @@ class MainActivity : AppCompatActivity() {
         val showClock = if (entityConfigured) clockForced else isWithinClockWindow()
         val lp = window.attributes
 
-        // Design-Entscheidung: Partikel-Screensaver hat unbedingten Vorrang vor dem Brain-Graph,
-        // sobald enableParticleScreensaver aktiv ist (Default: true). Der Partikel-Assistent ist
-        // das primäre KI-Feature dieser App: Brain-Graph bleibt nur erreichbar, wenn der Nutzer
-        // den Partikel-Screensaver in den Settings explizit deaktiviert (particleEnabled = false).
-        // Kein gleichzeitiger Betrieb beider Modi (eine WebView, ein Screensaver-Slot).
-        if (prefs.enableParticleScreensaver && !showClock) {
-            // Native Partikel-KI: kein WebView-/Chromium-/WebGL-Pfad mehr.
-            clockBlock.visibility = View.GONE
-            saverWebView.visibility = View.GONE
-            particleScreensaverView.start(
-                prefs.particleAssemblyAnimEnabled,
-                prefs.particleAnimationSpeed,
-            )
-            AppLog.i("Saver", "Native Partikel-Szene gestartet")
-            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-        } else if (brainUrl.isNotEmpty() && !showClock) {
+        // Uhr bzw. Brain-Graph bleiben der normale Screensaver. Der Partikel-Avatar wird nur
+        // nach einem Wake Word temporär darübergelegt und danach wieder vollständig gestoppt.
+        if (brainUrl.isNotEmpty() && !showClock) {
             // Brain-Graph-Modus: Live-3D-Graph in Vollbild, normale Helligkeit (soll sichtbar sein).
             clockBlock.visibility = View.GONE
-            particleScreensaverView.stop()
+            if (!particleAssistActive) particleScreensaverView.stop()
             saverWebView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             saverWebView.visibility = View.VISIBLE
             saverWebView.onResume()
@@ -676,7 +705,7 @@ class MainActivity : AppCompatActivity() {
             lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         } else {
             // Uhr-Modus: Uhr + Datum + Sensoren, Bildschirm auf ~3% dimmen.
-            particleScreensaverView.stop()
+            if (!particleAssistActive) particleScreensaverView.stop()
             saverWebView.visibility = View.GONE
             clockBlock.visibility = View.VISIBLE
             val now = Date()
@@ -699,6 +728,8 @@ class MainActivity : AppCompatActivity() {
         sensorFetcher?.stop()
         sensorFetcher = null
         particleController?.pause()
+        ui.removeCallbacks(hideParticleAssist)
+        particleAssistActive = false
         particleScreensaverView.stop()
 
         screensaver.animate().alpha(0f).setDuration(400).withEndAction {

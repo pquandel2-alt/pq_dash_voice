@@ -122,10 +122,15 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_DOORBELL_DISMISS, 30)
         set(v) = sp.edit().putInt(KEY_DOORBELL_DISMISS, v).apply()
 
-    /** Partikel-Screensaver aktiviert. */
+    /** Zeigt den Partikel-Avatar während einer Assist-Interaktion über dem normalen Screensaver. */
     var enableParticleScreensaver: Boolean
         get() = sp.getBoolean(KEY_PARTICLE_ENABLED, true)
         set(v) = sp.edit().putBoolean(KEY_PARTICLE_ENABLED, v).apply()
+
+    /** Mindestdauer, für die der Assist-Avatar nach dem Wake Word sichtbar bleibt. */
+    var particleAssistMinVisibleMs: Long
+        get() = sp.getLong(KEY_PARTICLE_ASSIST_MIN_VISIBLE, DEFAULT_PARTICLE_ASSIST_MIN_VISIBLE_MS)
+        set(v) = sp.edit().putLong(KEY_PARTICLE_ASSIST_MIN_VISIBLE, v).apply()
 
     /** Partikel-Qualität: AUTO, LOW, MEDIUM, HIGH. */
     var particleQuality: String
@@ -157,6 +162,7 @@ class Prefs(context: Context) {
         const val DEFAULT_PORT = 10700
         const val DEFAULT_NAME = "Wand-Tablet"
         const val DEFAULT_SCREENSAVER_DELAY = 120_000L
+        const val DEFAULT_PARTICLE_ASSIST_MIN_VISIBLE_MS = 5_000L
 
         private const val KEY_URL = "url"
         private const val KEY_PORT = "port"
@@ -179,6 +185,7 @@ class Prefs(context: Context) {
         private const val KEY_DOORBELL_URL = "doorbell_url"
         private const val KEY_DOORBELL_DISMISS = "doorbell_dismiss"
         private const val KEY_PARTICLE_ENABLED = "particle_screensaver_enabled"
+        private const val KEY_PARTICLE_ASSIST_MIN_VISIBLE = "particle_assist_min_visible"
         private const val KEY_PARTICLE_QUALITY = "particle_quality"
         private const val KEY_PARTICLE_SHOW_TRANSCRIPT = "particle_show_transcript"
         private const val KEY_PARTICLE_SHOW_RESPONSE = "particle_show_response"

@@ -26,6 +26,14 @@ class SettingsActivity : AppCompatActivity() {
         "Nie"          to Long.MAX_VALUE
     )
 
+    private val particleAssistDurationOptions = listOf(
+        "3 Sekunden" to 3_000L,
+        "5 Sekunden" to 5_000L,
+        "7 Sekunden" to 7_000L,
+        "10 Sekunden" to 10_000L,
+        "15 Sekunden" to 15_000L,
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
@@ -120,6 +128,17 @@ class SettingsActivity : AppCompatActivity() {
         val particleEnabled = findViewById<CheckBox>(R.id.particleEnabled)
         particleEnabled.isChecked = prefs.enableParticleScreensaver
 
+        val particleAssistDuration = findViewById<Spinner>(R.id.particleAssistDuration)
+        particleAssistDuration.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            particleAssistDurationOptions.map { it.first },
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        val particleDurationIndex = particleAssistDurationOptions.indexOfFirst {
+            it.second == prefs.particleAssistMinVisibleMs
+        }
+        particleAssistDuration.setSelection(if (particleDurationIndex >= 0) particleDurationIndex else 1)
+
         val particleQualitySpinner = findViewById<Spinner>(R.id.particleQuality)
         val qualityOptions = listOf("AUTO", "LOW", "MEDIUM", "HIGH")
         particleQualitySpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, qualityOptions)
@@ -179,6 +198,8 @@ class SettingsActivity : AppCompatActivity() {
             prefs.noiseSuppressionEnabled = noiseSuppression.isChecked
             prefs.animationStyle      = animSpinner.selectedItemPosition
             prefs.enableParticleScreensaver = particleEnabled.isChecked
+            prefs.particleAssistMinVisibleMs =
+                particleAssistDurationOptions[particleAssistDuration.selectedItemPosition].second
             prefs.particleQuality     = qualityOptions[particleQualitySpinner.selectedItemPosition]
             prefs.particleAssemblyAnimEnabled = particleAssemblyAnim.isChecked
             prefs.particleAnimationSpeed = particleSpeedBar.progress / 100f + 0.5f

@@ -13,6 +13,11 @@
             opacity: 1;
         }
         #fallbackCanvas { display: none; position: fixed; inset: 0; }
+        #debugReferenceGuide {
+            display: none; position: fixed; inset: 0; width: 100%; height: 100%;
+            object-fit: contain; opacity: 0.18; mix-blend-mode: screen;
+            pointer-events: none; z-index: 2;
+        }
         #debugInfo {
             position: absolute; top: 10px; left: 10px;
             color: #0f0; font-family: monospace; font-size: 12px;
@@ -39,6 +44,7 @@
 <body>
     <canvas id="canvas"></canvas>
     <canvas id="fallbackCanvas"></canvas>
+    <img id="debugReferenceGuide" src="images/particle-humanoid-reference.jpg" alt="" aria-hidden="true">
     <div id="debugInfo"></div>
     <div id="transcriptOverlay" class="assistantText"></div>
     <div id="responseOverlay" class="assistantText"></div>
@@ -47,8 +53,8 @@
     <script src="js/three.min.js"></script>
 
     <!-- Particle Scene Logic -->
-    <script src="js/particle-scene.js"></script>
-    <script src="js/particle-canvas-scene.js"></script>
+    <script src="js/particle-scene.js?v=2.8.16-4"></script>
+    <script src="js/particle-canvas-scene.js?v=2.8.16"></script>
 
     <script>
         // Transcript/response overlay bridge, called from Kotlin via evaluateJavascript.
@@ -73,6 +79,9 @@
             const fallbackCanvas = document.getElementById('fallbackCanvas');
             const params = new URLSearchParams(location.search);
             const renderer = params.get('renderer') || 'webgl';
+            if (params.get('debugReference') === '1') {
+                document.getElementById('debugReferenceGuide').style.display = 'block';
+            }
             try {
                 if (renderer === 'canvas') {
                     canvas.style.display = 'none';
@@ -81,6 +90,7 @@
                     await window.particleScene.prepare();
                 } else {
                     window.particleScene = new ParticleScene(canvas);
+                    await window.particleScene.prepare();
                 }
                 window.particleScene.configure({
                     quality: params.get('quality') || 'AUTO',
