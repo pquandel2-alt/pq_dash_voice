@@ -8,3 +8,8 @@
 /captures/
 .externalNativeBuild/
 .cxx/
+
+# Development-only avatar reference analysis
+/tools/avatar_reference/.venv/
+/tools/avatar_reference/__pycache__/
+/tools/avatar_reference/output/

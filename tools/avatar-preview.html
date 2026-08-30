@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Particle Avatar – 2.5D Target Field Review</title>
+  <title>Particle Avatar – Reference | HIGH | AUTO</title>
   <style>
     *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#02040a;color:#bdefff;font:13px system-ui,sans-serif}
-    header{height:86px;padding:9px 14px;background:#07121d;border-bottom:1px solid #12334a;display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center}
+    header{min-height:86px;padding:9px 14px;background:#07121d;border-bottom:1px solid #12334a;display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center}
     h1{margin:0;font-size:14px;letter-spacing:.04em}.metrics{color:#7eb9cf;line-height:1.45;text-align:center}.controls{display:flex;gap:6px}
     button{padding:6px 9px;background:#08283b;color:#bff;border:1px solid #176181;border-radius:4px;cursor:pointer}button.active{background:#0d6384;color:#fff}
     main{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:#173247}
     section{position:relative;overflow:hidden;background:#000;aspect-ratio:16/10}.label{position:absolute;z-index:3;top:8px;left:8px;padding:4px 7px;background:#001722dd;border:1px solid #165d73}
-    img,iframe,canvas{display:block;width:100%;height:100%;border:0;background:#000}img{object-fit:contain}
+    img,iframe{display:block;width:100%;height:100%;border:0;background:#000}img{object-fit:contain}
     footer{padding:8px 14px;color:#6198ab;background:#07121d}.ok{color:#69e6cd}
   </style>
 </head>
@@ -28,99 +28,43 @@
     </div>
   </header>
   <main>
-    <section><span class="label">Zielreferenz · DEV-only</span><img id="reference" src="../app/src/main/assets/images/particle-humanoid-reference.jpg" alt="Stilreferenz"></section>
-    <section><span class="label">WebGL · gemeinsames 2.5D Target Field</span><iframe id="renderer" src="../app/src/main/assets/particle-screensaver.html?quality=HIGH&assembly=0"></iframe></section>
-    <section><span class="label" id="native-label">Aktive native APK-Geometrie</span><canvas id="native"></canvas></section>
+    <section><span class="label">REFERENCE · DEV-only</span><img id="reference" src="../app/src/main/assets/images/particle-humanoid-reference.jpg" alt="Stilreferenz"></section>
+    <section><span class="label">NEW HIGH · 18.000 Punkte</span><iframe id="high" src="../app/src/main/assets/particle-screensaver.html?quality=HIGH&assembly=0"></iframe></section>
+    <section><span class="label">AUTO · MatePad-Profil · 11.000 Punkte</span><iframe id="auto" src="../app/src/main/assets/particle-screensaver.html?quality=LOW&assembly=0"></iframe></section>
   </main>
   <footer id="profile">Referenz-Kopfmaske wird analysiert …</footer>
   <script>
-    const frame=document.querySelector('#renderer');
-    const canvas=document.querySelector('#native');
-    const ctx=canvas.getContext('2d');
+    const frames=[document.querySelector('#high'),document.querySelector('#auto')];
     const reference=document.querySelector('#reference');
-    let nativeState='IDLE';
-    const geometry=fetch('../app/src/main/assets/avatar-geometry.json',{cache:'no-store'}).then(response=>response.json());
-    const scene=()=>frame.contentWindow?.particleScene;
-
+    const scenes=()=>frames.map(frame=>frame.contentWindow?.particleScene).filter(Boolean);
     document.querySelectorAll('[data-state]').forEach(button=>button.addEventListener('click',()=>{
       document.querySelectorAll('[data-state]').forEach(item=>item.classList.toggle('active',item===button));
-      scene()?.setState(button.dataset.state);
-      scene()?.setAudioLevel(button.dataset.state==='SPEAKING'?.82:0);
-      nativeState=button.dataset.state;
+      scenes().forEach(scene=>{scene.setState(button.dataset.state);scene.setAudioLevel(button.dataset.state==='SPEAKING'?.82:0)});
     }));
-    document.querySelector('#assemble').addEventListener('click',()=>{
-      const current=scene();if(!current)return;
-      current.config.assemblyEnabled=true;current.reset();current.setState('ASSEMBLING');
-      nativeState='ASSEMBLING';
-    });
-
-    function ellipseGlow(cx,cy,rx,ry,active,colors){
-      ctx.save();ctx.translate(cx,cy);ctx.scale(rx/ry,1);
-      const gradient=ctx.createRadialGradient(0,0,0,0,0,ry);
-      colors.forEach(([stop,color])=>gradient.addColorStop(stop,color.replace('$A',String(active))));
-      ctx.fillStyle=gradient;ctx.beginPath();ctx.arc(0,0,ry,0,Math.PI*2);ctx.fill();ctx.restore();
-    }
-
-    geometry.then(data=>{
-      const metrics=data.metrics;
-      document.querySelector('#native-label').textContent=`Aktive native APK-Geometrie · ${data.particleCount.toLocaleString('de-DE')} Punkte`;
-      const bodyCount=data.counts.shoulderBand+data.counts.shoulderSurface+data.counts.shoulderRim;
-      const headCount=(data.counts.headShell||0)+(data.counts.headBack||0)+(data.counts.headMid||0)+(data.counts.headFront||0)+data.counts.headBand+data.counts.headRimInner+data.counts.headRimMain+data.counts.headRimHalo+data.counts.faceCore;
+    document.querySelector('#assemble').addEventListener('click',()=>scenes().forEach(scene=>{
+      scene.config.assemblyEnabled=true;scene.reset();scene.setState('ASSEMBLING');
+    }));
+    fetch('../app/src/main/assets/avatar-target.json',{cache:'no-store'}).then(r=>r.json()).then(data=>{
+      const m=data.metrics,c=data.counts;
+      const head=(c.headBack||0)+(c.headMid||0)+(c.headFront||0)+(c.headBand||0)+(c.headRimInner||0)+(c.headRimMain||0)+(c.headRimHalo||0)+(c.faceCore||0);
+      const shoulders=(c.shoulderBand||0)+(c.shoulderSurface||0)+(c.shoulderRim||0);
       document.querySelector('#metrics').innerHTML=
-        `Kopf H/W <span class="ok">${metrics.headHeightToWidth}</span> · Schulter/Kopf <span class="ok">${metrics.shoulderToHead}</span> · `+
-        `Hals/Kopfbreite <span class="ok">${metrics.neckToHeadWidth}</span> · Core/Kopf <span class="ok">${metrics.faceCoreToHeadWidth}</span><br>`+
-        `${metrics.headBands} Head Bands · ${metrics.shoulderBandsPerSide}/Seite Shoulder Bands · ${metrics.sideTrailsPerSide}/Seite Side Trails · `+
-        `Kopf/Face ${(headCount/data.particleCount*100).toFixed(1)} % · Schulter ${(bodyCount/data.particleCount*100).toFixed(1)} %`;
-
-      const started=performance.now();
-      function draw(now){
-        const dpr=Math.min(devicePixelRatio||1,1.5),w=canvas.clientWidth,h=canvas.clientHeight;
-        if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){
-          canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);
-        }
-        ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);
-        const t=(now-started)/1000;
-        const active=nativeState==='LISTENING'?.9:nativeState==='SPEAKING'?.55+.35*(Math.sin(t*9)+1)/2:0;
-        ellipseGlow(w*.5,h*.340,w*.048*(1+active*.08),h*.088*(1+active*.08),active,[
-          [0,`rgba(255,244,180,${.68+active*.20})`],[.06,'rgba(255,185,28,.90)'],[.35,'rgba(255,82,0,.88)'],[.74,'rgba(255,40,0,.45)'],[1,'rgba(255,30,0,0)']
-        ]);
-        ellipseGlow(w*.5,h*.72,w*.015,h*.048,active,[[0,'rgba(225,255,255,.86)'],[.35,'rgba(0,224,255,.48)'],[1,'rgba(0,180,255,0)']]);
-        const haloAlpha={headRimHalo:.18,headRimMain:.20,headRimInner:.10,faceCore:.20,headBand:.16,headShell:.055,headBack:.025,headMid:.055,headFront:.095,shoulderRim:.13,shoulderBand:.085,shoulderSurface:.045,neckEnergy:.075,chestBand:.075,chestCore:.18,sideTrail:.035,ambient:.025};
-        for(const particle of data.particles){
-          const sway=Math.sin(t*.58)*w*.002*(1.15-particle.y);
-          const x=particle.x*w+sway+Math.sin(t*(.72+particle.drift*.055)+particle.phase)*particle.drift*.34;
-          const y=particle.y*h+Math.cos(t*(.61+particle.drift*.047)+particle.phase)*particle.drift*.34;
-          const pulse=.74+.26*Math.sin(t*2.4+particle.phase);
-          ctx.fillStyle=`rgb(${particle.color.join(',')})`;
-          const halo=haloAlpha[particle.region]||0;
-          if(halo){ctx.globalAlpha=halo*particle.brightness;ctx.beginPath();ctx.arc(x,y,Math.max(1,particle.radius*2.65),0,Math.PI*2);ctx.fill()}
-          ctx.globalAlpha=Math.max(.18,Math.min(1,particle.brightness*pulse+.2));
-          ctx.beginPath();ctx.arc(x,y,Math.max(.5,particle.radius*(.72+pulse*.28)),0,Math.PI*2);ctx.fill();
-        }
-        ctx.globalAlpha=1;requestAnimationFrame(draw);
-      }
-      requestAnimationFrame(draw);
+        `Kopf H/W <span class="ok">${m.headHeightToWidth}</span> · Crown <span class="ok">0.64</span> · Chin <span class="ok">0.54</span> · `+
+        `Hals/Kopfhöhe <span class="ok">${(m.visibleNeckHeight/m.headHeight).toFixed(3)}</span> · Schulter/Kopf <span class="ok">${m.shoulderToHead}</span><br>`+
+        `Core B/Kopf <span class="ok">${m.faceCoreToHeadWidth}</span> · Core H/Kopf <span class="ok">${(m.faceCoreHeight/m.headHeight).toFixed(3)}</span> · `+
+        `${m.headBands} Head Bands · ${m.headBandSamplesMin}–${m.headBandSamplesMax} Samples · Kopf/Face ${(head/data.particleCount*100).toFixed(1)} % · Schulter ${(shoulders/data.particleCount*100).toFixed(1)} %`;
     });
-
-    // Development-only cyan head-mask width profile from the supplied review reference.
     function analyseReference(){
       const off=document.createElement('canvas');off.width=reference.naturalWidth;off.height=reference.naturalHeight;
-      const offCtx=off.getContext('2d',{willReadFrequently:true});offCtx.drawImage(reference,0,0);
-      const image=offCtx.getImageData(0,0,off.width,off.height).data;
-      const top=.18*off.height,bottom=.52*off.height,rows=[.1,.2,.3,.4,.5,.6,.7,.8,.9];
-      const widths=[];
-      for(const fraction of rows){
-        const y=Math.round(top+(bottom-top)*fraction);let left=off.width,right=0;
-        for(let x=Math.round(off.width*.27);x<Math.round(off.width*.73);x++){
-          const i=(y*off.width+x)*4,r=image[i],g=image[i+1],b=image[i+2];
-          if(g>85&&b>95&&b>r*1.12){left=Math.min(left,x);right=Math.max(right,x)}
-        }
-        widths.push(Math.max(0,right-left));
-      }
-      const max=Math.max(...widths,1);
-      const normalized=widths.map(width=>(width/max).toFixed(2));
-      document.querySelector('#profile').innerHTML=`DEV Kopfmaske · Referenzbreite bei 10…90 % Höhe: <span class="ok">${normalized.join(' · ')}</span> · `+
-        `Target-Spline: <span class="ok">0.52 · 0.78 · 0.92 · 0.98 · 1.00 · 0.95 · 0.89 · 0.78 · 0.64</span>`;
+      const ctx=off.getContext('2d',{willReadFrequently:true});ctx.drawImage(reference,0,0);
+      const image=ctx.getImageData(0,0,off.width,off.height).data;
+      const top=.18*off.height,bottom=.52*off.height,rows=[.1,.2,.3,.4,.5,.6,.7,.8,.9],widths=[];
+      for(const f of rows){const y=Math.round(top+(bottom-top)*f);let left=off.width,right=0;
+        for(let x=Math.round(off.width*.27);x<Math.round(off.width*.73);x++){const i=(y*off.width+x)*4,r=image[i],g=image[i+1],b=image[i+2];if(g>85&&b>95&&b>r*1.12){left=Math.min(left,x);right=Math.max(right,x)}}
+        widths.push(Math.max(0,right-left));}
+      const max=Math.max(...widths,1),normalized=widths.map(width=>(width/max).toFixed(2));
+      document.querySelector('#profile').innerHTML=`DEV Kopfmaske · Referenzbreite 10…90 %: <span class="ok">${normalized.join(' · ')}</span> · `+
+        `Neue gemeinsame Boundary: <span class="ok">0.82 · 0.94 · 0.98 · 1.00 · 0.99 · 0.95 · 0.89 · 0.77 · 0.64</span>`;
     }
     if(reference.complete)analyseReference();else reference.addEventListener('load',analyseReference,{once:true});
   </script>

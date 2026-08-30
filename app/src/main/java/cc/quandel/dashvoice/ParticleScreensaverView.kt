@@ -124,7 +124,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
 
     /** Loads the exact same normalized point set used by tools/avatar-preview.html. */
     private fun buildSharedGeometry(viewWidth: Int, viewHeight: Int): List<Particle> {
-        val json = context.assets.open("avatar-geometry.json").bufferedReader().use { it.readText() }
+        val json = context.assets.open("avatar-target.json").bufferedReader().use { it.readText() }
         val source = JSONObject(json).getJSONArray("particles")
         return ArrayList<Particle>(source.length()).apply {
             for (index in 0 until source.length()) {
@@ -427,7 +427,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
             val blue = Color.blue(particle.color)
             val warmCore = particle.region == "faceCore"
             if (warmCore) {
-                val faceCenterY = height * 0.335f
+                val faceCenterY = height * 0.302f
                 val corePulse = 1f + sin(seconds * 2.35f) * 0.032f
                 targetX = centerX + (targetX - centerX) * corePulse
                 targetY = faceCenterY + (targetY - faceCenterY) * corePulse
@@ -576,7 +576,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
 
     private fun drawCoreGlow(canvas: Canvas, seconds: Float, activeEnergy: Float) {
         val cx = width * 0.5f
-        val cy = height * 0.340f
+        val cy = height * 0.302f
         val pulse = 1f + sin(seconds * 2.35f) * 0.025f + activeEnergy * 0.08f
         val radiusY = height * 0.088f * pulse
         val radiusX = width * 0.048f * pulse
@@ -604,7 +604,7 @@ class ParticleScreensaverView @JvmOverloads constructor(
 
     private fun drawChestGlow(canvas: Canvas, seconds: Float) {
         val cx = width * 0.5f
-        val cy = height * 0.720f
+        val cy = height * 0.680f
         val pulse = 1f + sin(seconds * 3.1f) * 0.08f
         val radiusY = height * 0.048f * pulse
         val radiusX = width * 0.015f * pulse

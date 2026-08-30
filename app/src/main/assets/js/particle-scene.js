@@ -67,20 +67,15 @@ const REGION_WINDOW = {
 // sphere — width/depth now genuinely depend on height, giving a skull → temple → cheekbone →
 // jaw → chin taper instead of a ball.
 const HEAD_PROFILE = [
-    { h: 1.00, rx: 0.02, rz: 0.12 },
-    { h: 0.93, rx: 0.24, rz: 0.42 },
-    { h: 0.80, rx: 0.52, rz: 0.70 },
-    { h: 0.60, rx: 0.78, rz: 0.90 },
-    { h: 0.40, rx: 0.92, rz: 0.98 },
-    { h: 0.20, rx: 0.98, rz: 1.00 },
-    { h: 0.00, rx: 1.00, rz: 1.00 },
-    { h: -0.04, rx: 0.99, rz: 0.97 },
-    { h: -0.24, rx: 0.95, rz: 0.91 },
-    { h: -0.44, rx: 0.89, rz: 0.83 },
-    { h: -0.64, rx: 0.78, rz: 0.72 },
-    { h: -0.80, rx: 0.64, rz: 0.59 },
-    { h: -0.92, rx: 0.40, rz: 0.40 },
-    { h: -1.00, rx: 0.10, rz: 0.16 },
+    { h: 1.00, rx: 0.46, rz: 0.46 },
+    { h: 0.92, rx: 0.84, rz: 0.76 },
+    { h: 0.64, rx: 1.00, rz: 0.98 },
+    { h: 0.08, rx: 1.00, rz: 1.00 },
+    { h: -0.40, rx: 0.98, rz: 0.96 },
+    { h: -0.60, rx: 0.93, rz: 0.88 },
+    { h: -0.80, rx: 0.85, rz: 0.76 },
+    { h: -0.92, rx: 0.68, rz: 0.60 },
+    { h: -1.00, rx: 0.54, rz: 0.48 },
 ];
 
 function headProfileAt(h) {
@@ -267,7 +262,7 @@ void main() {
 `;
 
 class ParticleScene {
-    static QUALITY_PRESETS = { LOW: 6000, MEDIUM: 12000, HIGH: 18000 };
+    static QUALITY_PRESETS = { LOW: 11000, MEDIUM: 14500, HIGH: 18000 };
 
     constructor(canvasElement) {
         this.canvas = canvasElement;
@@ -319,6 +314,7 @@ class ParticleScene {
         this.layout = null; // anatomical constants from computeLayout()
         this.geometrySeed = 0x5f3759df;
         this.sharedGeometryData = null;
+        this.geometryMode = 'PROCEDURAL_FALLBACK'; // set by prepare(): REFERENCE_TARGET | PROCEDURAL_FALLBACK
 
         this.config = {
             quality: 'AUTO',
@@ -340,14 +336,36 @@ class ParticleScene {
         window.addEventListener('resize', () => this.onWindowResize());
     }
 
-    /** Loads the deterministic reference-driven target field used by the native APK too. */
+    /**
+     * Loads the shared target field used by the native APK too, preferring the
+     * reference-analysis-derived field (dev tools/avatar_reference/) over the
+     * hand-authored procedural one. Never fetches the reference image itself at
+     * runtime — only pre-generated geometry data. If neither JSON field loads,
+     * this does NOT throw: sharedGeometryData stays null and
+     * generateTargetGeometry() falls back to the fully in-JS procedural
+     * generators (genHeadSurface() etc.) as the last-resort geometry source.
+     */
     async prepare() {
-        const response = await fetch('avatar-geometry.json', { cache: 'no-store' });
-        if (!response.ok) throw new Error(`Avatar target field HTTP ${response.status}`);
-        this.sharedGeometryData = await response.json();
-        if (!Array.isArray(this.sharedGeometryData?.particles) || !this.sharedGeometryData.particles.length) {
-            throw new Error('Avatar target field is empty');
+        const candidates = [
+            { url: 'avatar-target.json', mode: 'REFERENCE_TARGET' },
+            { url: 'avatar-geometry.json', mode: 'PROCEDURAL_FALLBACK' },
+        ];
+        for (const candidate of candidates) {
+            try {
+                const response = await fetch(candidate.url, { cache: 'no-store' });
+                if (!response.ok) continue;
+                const data = await response.json();
+                if (!Array.isArray(data?.particles) || !data.particles.length) continue;
+                this.sharedGeometryData = data;
+                this.geometryMode = candidate.mode;
+                this.log(`Geometry source: ${candidate.mode} (${candidate.url}, ${data.particles.length} points)`);
+                return;
+            } catch (error) {
+                this.log(`Geometry source ${candidate.url} failed: ${error?.message || error}`);
+            }
         }
+        this.geometryMode = 'PROCEDURAL_FALLBACK';
+        this.log('No shared geometry field available — using in-JS procedural fallback');
     }
 
     /** Muss vor start() aufgerufen werden. opts: {quality, animationSpeedMultiplier, assemblyEnabled, debug} */
@@ -483,8 +501,8 @@ class ParticleScene {
         const s = this.config.headRadius / 80;
         const worldHeight = 400 * s;
         const yWorld = normalizedY => (0.5 - normalizedY) * worldHeight;
-        const headTopY = yWorld(0.165);
-        const headBottomY = yWorld(0.485);
+        const headTopY = yWorld(0.180);
+        const headBottomY = yWorld(0.475);
         const headHalfHeight = (headTopY - headBottomY) / 2;
         const headCenterY = (headTopY + headBottomY) / 2;
         const neckTopY = headBottomY;
@@ -497,7 +515,7 @@ class ParticleScene {
             s,
             headCenterY,
             headHalfHeight,
-            headHalfWidthMax: 45.44 * s,
+            headHalfWidthMax: 46.72 * s,
             headHalfDepthMax: 16 * s,
             headTopY,
             headBottomY,
@@ -581,6 +599,9 @@ class ParticleScene {
     generateSharedTargetGeometry() {
         const source = this.sharedGeometryData.particles;
         const requested = Math.min(this.config.particleCount, source.length);
+        // Downsampling must not visually change the sculpture. Sparse quality levels keep
+        // exactly the same target field and receive only a bounded point-size compensation.
+        const densityCompensation = Math.min(1.5, Math.sqrt(source.length / requested));
         const worldHeight = 400 * this.layout.s;
         const worldWidth = worldHeight * 1.6;
         const regionId = particle => {
@@ -613,7 +634,7 @@ class ParticleScene {
                 z: particle.targetZ * worldHeight,
                 region: regionId(particle),
                 color: new THREE.Color(particle.color[0] / 255, particle.color[1] / 255, particle.color[2] / 255),
-                size: particle.baseSize * 2.08 * this.layout.s * (
+                size: particle.baseSize * 2.08 * densityCompensation * this.layout.s * (
                     particle.region === 'faceCore' ? 0.98 :
                         particle.region === 'chestCore' ? 1.30 :
                         particle.region === 'headBand' ? 1.18 :

@@ -162,7 +162,7 @@ class WyomingServer(
             .put("start_stage", "wake")
             .put("end_stage", "tts")
             .put("restart_on_end", true)
-            .put("snd_format", JSONObject().put("rate", 22050).put("width", 2).put("channels", 1))
+            .put("snd_format", inputAudioFormat())
         send(WyomingEvent("run-pipeline", data))
     }
 
@@ -172,11 +172,11 @@ class WyomingServer(
             .put("start_stage", "asr")
             .put("end_stage", "tts")
             .put("restart_on_end", false)
-            .put("snd_format", JSONObject().put("rate", 22050).put("width", 2).put("channels", 1))
+            .put("snd_format", inputAudioFormat())
         send(WyomingEvent("run-pipeline", data))
     }
 
-    fun sendAudioStart(rate: Int = 16000, width: Int = 2, channels: Int = 1) {
+    fun sendAudioStart(rate: Int = INPUT_SAMPLE_RATE, width: Int = 2, channels: Int = 1) {
         send(
             WyomingEvent(
                 "audio-start",
@@ -186,7 +186,7 @@ class WyomingServer(
         )
     }
 
-    fun sendAudioChunk(pcm: ByteArray, rate: Int = 16000, width: Int = 2, channels: Int = 1) {
+    fun sendAudioChunk(pcm: ByteArray, rate: Int = INPUT_SAMPLE_RATE, width: Int = 2, channels: Int = 1) {
         val data = JSONObject().put("rate", rate).put("width", width)
             .put("channels", channels).put("timestamp", System.currentTimeMillis())
         send(WyomingEvent("audio-chunk", data, pcm))
@@ -197,6 +197,11 @@ class WyomingServer(
     }
 
     fun sendPlayed() = send(WyomingEvent("played"))
+
+    private fun inputAudioFormat() = JSONObject()
+        .put("rate", INPUT_SAMPLE_RATE)
+        .put("width", INPUT_SAMPLE_WIDTH)
+        .put("channels", INPUT_CHANNELS)
 
     fun stop() {
         running = false
@@ -216,5 +221,8 @@ class WyomingServer(
 
     companion object {
         private const val TAG = "WyomingServer"
+        const val INPUT_SAMPLE_RATE = 16000
+        private const val INPUT_SAMPLE_WIDTH = 2
+        private const val INPUT_CHANNELS = 1
     }
 }

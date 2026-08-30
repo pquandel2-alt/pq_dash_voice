@@ -32,7 +32,7 @@ class CanvasParticleScene {
     }
 
     async prepare() {
-        const response = await fetch('avatar-geometry.json');
+        const response = await fetch('avatar-target.json');
         if (!response.ok) throw new Error(`Canvas geometry load failed (${response.status})`);
         this.geometryData = (await response.json()).particles;
         this.sampleReference();
