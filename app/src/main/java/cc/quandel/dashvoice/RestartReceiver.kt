@@ -18,8 +18,9 @@ class RestartReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         Log.i(TAG, "Geplanter Selbst-Neustart")
-        // Service sicherstellen (START_STICKY) und UI frisch relaunchen (neuer WebView).
-        VoiceService.start(context)
+        // Android recreates an already running Service nicht. Refresh deshalb AudioRecord und
+        // Wyoming-Verbindung explizit, bevor die UI einen frischen WebView bekommt.
+        VoiceService.refreshRuntime(context)
         try {
             context.startActivity(
                 Intent(context, MainActivity::class.java)

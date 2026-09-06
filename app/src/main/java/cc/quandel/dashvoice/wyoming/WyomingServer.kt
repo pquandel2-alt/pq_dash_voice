@@ -42,7 +42,8 @@ class WyomingServer(
     @Volatile private var running = false
     private var acceptThread: Thread? = null
 
-    val isConnected: Boolean get() = clientOut != null
+    val isConnected: Boolean
+        get() = clientOut != null && clientSocket?.let { it.isConnected && !it.isClosed } == true
 
     /** True solange der Server-Socket lebt und der Accept-Loop laufen soll (für den Watchdog). */
     val isListening: Boolean get() = running && serverSocket?.isClosed == false
@@ -74,6 +75,7 @@ class WyomingServer(
         Log.i(TAG, "Client connected: ${sock.inetAddress}")
         try {
             sock.tcpNoDelay = true
+            sock.keepAlive = true
         } catch (_: Exception) {
         }
         val input = DataInputStream(sock.getInputStream().buffered())
@@ -141,6 +143,15 @@ class WyomingServer(
             ev.writeTo(out)
         } catch (e: Exception) {
             Log.w(TAG, "send ${ev.type}: ${e.javaClass.simpleName} ${e.message}")
+            // A failed write means the cached OutputStream is no longer a valid connection.
+            // Closing the socket also unblocks handleClient's blocking read so HA can reconnect.
+            clientOut = null
+            val staleSocket = clientSocket
+            clientSocket = null
+            try {
+                staleSocket?.close()
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -205,6 +216,7 @@ class WyomingServer(
 
     fun stop() {
         running = false
+        val threadToStop = acceptThread
         try {
             clientSocket?.close()
         } catch (_: Exception) {
@@ -212,6 +224,13 @@ class WyomingServer(
         try {
             serverSocket?.close()
         } catch (_: Exception) {
+        }
+        if (threadToStop != Thread.currentThread()) {
+            try {
+                threadToStop?.join(1_000)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
         }
         clientOut = null
         clientSocket = null

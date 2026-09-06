@@ -26,7 +26,12 @@ object AppLog {
 
     fun initFileLog(dir: File) {
         val f = File(dir, "dashvoice_debug.log")
-        f.writeText("--- Log start ${fmt.format(Date())} ---\n")
+        if (f.length() > MAX_FILE_BYTES) {
+            val previous = File(dir, "dashvoice_debug.previous.log")
+            try { previous.delete() } catch (_: Exception) {}
+            try { f.renameTo(previous) } catch (_: Exception) {}
+        }
+        f.appendText("\n--- Log start ${fmt.format(Date())} ---\n")
         logFile = f
     }
 
@@ -55,4 +60,6 @@ object AppLog {
     }
 
     fun snapshot(): List<String> = synchronized(buffer) { buffer.toList() }
+
+    private const val MAX_FILE_BYTES = 2L * 1024L * 1024L
 }

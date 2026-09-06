@@ -57,6 +57,8 @@ class VoiceService : Service(), WyomingServer.Listener {
     private var wakeLock: PowerManager.WakeLock? = null
     private var ringer: Ringer? = null
     private var battery: BatteryReporter? = null
+    private var lastMicDiagnosticAt = 0L
+    private var lastAudioRestartAt = 0L
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val ttsTimeoutRunnable = Runnable {
@@ -81,6 +83,16 @@ class VoiceService : Service(), WyomingServer.Listener {
                 VoiceEvents.onNetworkAvailable?.invoke()
             }
         }
+
+        override fun onLost(network: Network) {
+            handler.post {
+                Log.w(TAG, "Netzwerk verloren — trenne veraltete Wyoming-Verbindung")
+                server.stop()
+                satelliteActive = false
+                manualPipeline = false
+                setIdle()
+            }
+        }
     }
 
     private val watchdog = object : Runnable {
@@ -90,6 +102,9 @@ class VoiceService : Service(), WyomingServer.Listener {
                     Log.w(TAG, "Watchdog: Wyoming-Server lauscht nicht — Neustart")
                     server.stop()
                     server.start()
+                }
+                capture.healthIssue(AUDIO_FRAME_TIMEOUT_MS)?.let { issue ->
+                    restartAudioCapture("Watchdog: $issue")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Watchdog-Fehler: ${e.message}")
@@ -122,7 +137,7 @@ class VoiceService : Service(), WyomingServer.Listener {
             .build()
         connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
 
-        capture.start(::onAudioFrame)
+        startAudioCapture()
         handler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
         RestartReceiver.schedule(this)
         battery = BatteryReporter(this, prefs.dashboardUrl, prefs.haToken, prefs.satelliteName)
@@ -135,6 +150,55 @@ class VoiceService : Service(), WyomingServer.Listener {
         if (!server.isConnected || (!satelliteActive && !manualPipeline)) return
         if (ringer?.isRinging == true) return
         server.sendAudioChunk(shortsToBytes(frame))
+        if (state == State.STREAMING) logMicDiagnostic()
+    }
+
+    private fun startAudioCapture() {
+        capture.start(::onAudioFrame) { reason ->
+            handler.post { restartAudioCapture(reason) }
+        }
+    }
+
+    /** Recreate AudioRecord after Huawei's long-running input path returns DEAD_OBJECT/stalls. */
+    private fun restartAudioCapture(reason: String) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastAudioRestartAt < AUDIO_RESTART_BACKOFF_MS) return
+        lastAudioRestartAt = now
+        Log.w(TAG, "Mikrofonpfad neu starten: $reason")
+        capture.stop()
+        capture = AudioCapture(gain = prefs.micGain, noiseSuppression = captureNoiseSuppression)
+        startAudioCapture()
+    }
+
+    /** Refreshes all long-lived voice I/O without relying on Android recreating this service. */
+    private fun refreshVoiceRuntime(reason: String) {
+        Log.i(TAG, "Voice-Runtime neu starten: $reason")
+        satelliteActive = false
+        manualPipeline = false
+        handler.removeCallbacks(ttsTimeoutRunnable)
+        player.stop()
+        abandonTtsFocus()
+        setIdle()
+        server.stop()
+        capture.stop()
+        server.start()
+        capture = AudioCapture(gain = prefs.micGain, noiseSuppression = captureNoiseSuppression)
+        startAudioCapture()
+    }
+
+    /** Log enough signal information to distinguish silence, clipping and an HA/VAD timeout. */
+    private fun logMicDiagnostic() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastMicDiagnosticAt < MIC_DIAGNOSTIC_INTERVAL_MS) return
+        lastMicDiagnosticAt = now
+        val stats = capture.audioStats() ?: return
+        Log.i(
+            TAG,
+            "Mic stream: rawRms=${"%.3f".format(stats.rawRms)} " +
+                "outRms=${"%.3f".format(stats.outputRms)} " +
+                "peak=${stats.outputPeak} gain=${"%.2f".format(stats.appliedGain)}/" +
+                "${"%.2f".format(stats.requestedGain)} limited=${stats.limited}"
+        )
     }
 
     /** Manual mic button: still no local recognition; the stream starts directly at HA STT. */
@@ -380,7 +444,7 @@ class VoiceService : Service(), WyomingServer.Listener {
             captureNoiseSuppression = prefs.noiseSuppressionEnabled
             capture.stop()
             capture = AudioCapture(gain = prefs.micGain, noiseSuppression = captureNoiseSuppression)
-            capture.start(::onAudioFrame)
+            startAudioCapture()
         }
         Log.i(TAG, "Audio live übernommen: gain=${prefs.micGain} ns=${prefs.noiseSuppressionEnabled}")
     }
@@ -391,6 +455,7 @@ class VoiceService : Service(), WyomingServer.Listener {
             TimerReceiver.ACTION_TIMER -> ringTimer()
             ACTION_TIMER_STOP -> stopTimerRing()
             ACTION_APPLY_SETTINGS -> applySettings()
+            ACTION_REFRESH_RUNTIME -> refreshVoiceRuntime("geplanter täglicher Neustart")
         }
         return START_STICKY
     }
@@ -454,13 +519,17 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val CHANNEL = "dashvoice"
         private const val NOTIF_ID = 1
         private const val WATCHDOG_INTERVAL_MS = 60_000L
+        private const val AUDIO_FRAME_TIMEOUT_MS = 10_000L
+        private const val AUDIO_RESTART_BACKOFF_MS = 5_000L
         private const val TTS_TIMEOUT_MS = 30_000L
         private const val PIPELINE_RESTART_DELAY_MS = 1_000L
+        private const val MIC_DIAGNOSTIC_INTERVAL_MS = 500L
         private const val TIMER_AUTOSTOP_MS = 120_000L
         private const val WYOMING_SERVICE_TYPE = "_wyoming._tcp."
         const val ACTION_TALK = "cc.quandel.dashvoice.TALK"
         const val ACTION_TIMER_STOP = "cc.quandel.dashvoice.TIMER_STOP"
         const val ACTION_APPLY_SETTINGS = "cc.quandel.dashvoice.APPLY_SETTINGS"
+        const val ACTION_REFRESH_RUNTIME = "cc.quandel.dashvoice.REFRESH_RUNTIME"
 
         private fun startService(ctx: Context, intent: Intent) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(intent)
@@ -468,6 +537,9 @@ class VoiceService : Service(), WyomingServer.Listener {
         }
 
         fun start(ctx: Context) = startService(ctx, Intent(ctx, VoiceService::class.java))
+        fun refreshRuntime(ctx: Context) = startService(
+            ctx, Intent(ctx, VoiceService::class.java).setAction(ACTION_REFRESH_RUNTIME)
+        )
         fun talk(ctx: Context) = startService(
             ctx, Intent(ctx, VoiceService::class.java).setAction(ACTION_TALK)
         )
