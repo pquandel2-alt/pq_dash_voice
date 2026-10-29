@@ -42,6 +42,10 @@ class AvatarStateMachine(
     var currentIsOneShot: Boolean = false
         private set
 
+    /** Vom Nutzer weggetippt: ausgeblendet bis zur nächsten neuen Aktivität bzw. One-Shot. */
+    var dismissed: Boolean = false
+        private set
+
     private var activityEndedAt: Long? = null
 
     val isPlaying: Boolean get() = currentScene != null
@@ -60,7 +64,10 @@ class AvatarStateMachine(
         val previous = assistState
         assistState = state
         // Aktivität hat Vorrang: ein noch nicht gestarteter One-Shot verfällt.
-        if (state != AssistState.IDLE) pendingOneShot = null
+        if (state != AssistState.IDLE) {
+            pendingOneShot = null
+            dismissed = false
+        }
         if (previous != AssistState.IDLE && state == AssistState.IDLE) activityEndedAt = clock()
     }
 
@@ -78,7 +85,15 @@ class AvatarStateMachine(
         if (assistState != AssistState.IDLE || nightMode) return false
         if (!available(key)) return false
         pendingOneShot = key
+        dismissed = false
         return true
+    }
+
+    /** Nutzer hat den Avatar weggetippt: sofort ausblenden, kein Nachlauf. */
+    fun dismiss() {
+        dismissed = true
+        pendingOneShot = null
+        activityEndedAt = null
     }
 
     /** Vom Player: ein Clip der Szene [scene] ist gerade sichtbar geworden (Clipgrenze oder Crossfade). */
@@ -101,7 +116,7 @@ class AvatarStateMachine(
     // ── Ausgänge ────────────────────────────────────────────────────────────────────────────
 
     /** Soll das Overlay jetzt (weiter) sichtbar sein? */
-    fun shouldBeVisible(now: Long = clock()): Boolean = currentIsOneShot || visibleAt(now)
+    fun shouldBeVisible(now: Long = clock()): Boolean = !dismissed && (currentIsOneShot || visibleAt(now))
 
     /**
      * Erste Szene, wenn das Overlay gerade nicht sichtbar ist. null = ausgeblendet bleiben.
@@ -120,7 +135,7 @@ class AvatarStateMachine(
      * null = an dieser Grenze stoppen und ausblenden.
      */
     fun nextScene(remainingMs: Long): String? {
-        if (!isPlaying) return null
+        if (!isPlaying || dismissed) return null
         val boundary = clock() + remainingMs.coerceAtLeast(0L)
         val visible = visibleAt(boundary)
         if (poseAfterCurrent == Pose.ASLEEP) {
@@ -153,6 +168,7 @@ class AvatarStateMachine(
     // ── intern ──────────────────────────────────────────────────────────────────────────────
 
     private fun visibleAt(t: Long): Boolean {
+        if (dismissed) return false
         if (config.alwaysShow) return true
         if (assistState != AssistState.IDLE) return true
         if (pendingOneShot != null) return true

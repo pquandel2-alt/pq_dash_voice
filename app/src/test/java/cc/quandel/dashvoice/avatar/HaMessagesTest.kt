@@ -20,9 +20,18 @@ class HaMessagesTest {
         )
         val updates = HaMessages.parseEntityEvent(event).associateBy { it.entityId }
         assertEquals(HaMessages.StateUpdate("assist_satellite.kueche", "idle", true), updates["assist_satellite.kueche"])
-        assertEquals(HaMessages.StateUpdate("assist_satellite.wohnzimmer", "listening", false), updates["assist_satellite.wohnzimmer"])
+        assertEquals(
+            HaMessages.StateUpdate("assist_satellite.wohnzimmer", "listening", false, 1_000L),
+            updates["assist_satellite.wohnzimmer"],
+        )
         assertNull(updates["input_text.avatar_clip"])               // nur Zeitstempel geändert
         assertEquals(HaMessages.StateUpdate("assist_satellite.alt", null, false), updates["assist_satellite.alt"])
+    }
+
+    @Test
+    fun `last changed falls back to last updated`() {
+        val event = JSONObject("""{"a": {"assist_satellite.x": {"s": "listening", "lu": 1700000000.5}}}""")
+        assertEquals(1_700_000_000_500L, HaMessages.parseEntityEvent(event).single().lastChangedEpochMs)
     }
 
     @Test

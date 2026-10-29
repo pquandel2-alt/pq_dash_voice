@@ -72,6 +72,22 @@ class VoiceService : Service(), WyomingServer.Listener {
         }
     }
 
+    /**
+     * HA beendet die STT-Phase nur, wenn sein VAD Sprache erkannt hat. Bleibt die erkannte
+     * Sprache aus (Stille, zu leise), steckt der Satellit sonst unbegrenzt in "listening" und
+     * das Wake Word ist abgeschaltet. Nach Ablauf zurück zur HA-Wake-Pipeline.
+     */
+    private val listeningTimeoutRunnable = Runnable {
+        if (state == State.STREAMING) {
+            Log.w(TAG, "Kein Sprachende nach ${LISTENING_TIMEOUT_MS / 1000}s → zurück zur Wake-Pipeline")
+            manualPipeline = false
+            setIdle()
+            if (satelliteActive && server.isConnected) {
+                Thread { server.sendRunPipelineRemoteWake() }.start()
+            }
+        }
+    }
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             handler.post {
@@ -210,6 +226,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         server.sendRunPipelineManual()
         state = State.STREAMING
         VoiceEvents.voiceState = State.STREAMING
+        armListeningTimeout()
         notifyWakeUi()
     }
 
@@ -230,7 +247,13 @@ class VoiceService : Service(), WyomingServer.Listener {
         }
     }
 
+    private fun armListeningTimeout() {
+        handler.removeCallbacks(listeningTimeoutRunnable)
+        handler.postDelayed(listeningTimeoutRunnable, LISTENING_TIMEOUT_MS)
+    }
+
     private fun setIdle() {
+        handler.removeCallbacks(listeningTimeoutRunnable)
         state = State.IDLE
         VoiceEvents.voiceState = State.IDLE
         handler.post { VoiceEvents.onIdle?.invoke() }
@@ -340,11 +363,13 @@ class VoiceService : Service(), WyomingServer.Listener {
         Log.i(TAG, "HA wake detected: ${name.ifBlank { "configured wake word" }}")
         state = State.STREAMING
         VoiceEvents.voiceState = State.STREAMING
+        armListeningTimeout()
         notifyWakeUi()
     }
 
     override fun onVoiceStopped() {
         // HA's pipeline VAD owns end-of-speech; audio streaming itself remains continuous.
+        handler.removeCallbacks(listeningTimeoutRunnable)
         if (state == State.STREAMING) {
             state = State.SPEAKING
             VoiceEvents.voiceState = State.SPEAKING
@@ -365,6 +390,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     override fun onTtsAudioStart(rate: Int, width: Int, channels: Int) {
         Log.i(TAG, "TTS start ${rate}Hz/${channels}ch")
         handler.removeCallbacks(ttsTimeoutRunnable)
+        handler.removeCallbacks(listeningTimeoutRunnable)
         ignoreTtsChunks = false
         requestTtsFocus()
         state = State.SPEAKING
@@ -461,6 +487,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(listeningTimeoutRunnable)
         handler.removeCallbacks(watchdog)
         handler.removeCallbacks(ttsTimeoutRunnable)
         capture.stop()
@@ -522,6 +549,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         private const val AUDIO_FRAME_TIMEOUT_MS = 10_000L
         private const val AUDIO_RESTART_BACKOFF_MS = 5_000L
         private const val TTS_TIMEOUT_MS = 30_000L
+        private const val LISTENING_TIMEOUT_MS = 20_000L
         private const val PIPELINE_RESTART_DELAY_MS = 1_000L
         private const val MIC_DIAGNOSTIC_INTERVAL_MS = 500L
         private const val TIMER_AUTOSTOP_MS = 120_000L

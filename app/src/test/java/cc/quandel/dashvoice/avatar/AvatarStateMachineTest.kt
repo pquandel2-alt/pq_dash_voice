@@ -302,4 +302,52 @@ class AvatarStateMachineTest {
         assertNull(m.currentScene)
         assertNull(m.startScene())
     }
+
+    // ── Wegtippen ───────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `dismiss hides immediately and stays hidden while state is unchanged`() {
+        val m = machine()
+        m.onAssistState(AssistState.LISTENING)
+        m.startPlaying()
+        m.dismiss()
+        assertFalse(m.shouldBeVisible())
+        assertNull(m.nextScene(3_000))
+        assertNull(m.urgentSwitch(3_000))
+        m.onPlaybackStopped()
+        assertNull(m.startScene())
+    }
+
+    @Test
+    fun `dismiss has no linger when the stuck state ends`() {
+        val m = machine(lingerMs = 4_000)
+        m.onAssistState(AssistState.LISTENING)
+        m.startPlaying()
+        m.dismiss()
+        m.onPlaybackStopped()
+        m.onAssistState(AssistState.IDLE)
+        assertNull(m.startScene())
+    }
+
+    @Test
+    fun `new activity after dismiss shows avatar again`() {
+        val m = machine()
+        m.onAssistState(AssistState.LISTENING)
+        m.startPlaying()
+        m.dismiss()
+        m.onPlaybackStopped()
+        m.onAssistState(AssistState.PROCESSING)
+        assertEquals("thinking", m.startScene())
+    }
+
+    @Test
+    fun `dismiss also overrides always show until next activity or one shot`() {
+        val m = machine(alwaysShow = true)
+        m.startPlaying()
+        m.dismiss()
+        m.onPlaybackStopped()
+        assertNull(m.startScene())
+        assertTrue(m.onOneShot("happy"))
+        assertEquals("happy", m.startScene())
+    }
 }

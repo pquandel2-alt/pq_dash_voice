@@ -17,7 +17,8 @@ import java.io.File
  * (von unten nach oben) das Poster (home.png, damit nie Schwarz zu sehen ist) und zwei
  * TextureViews für die beiden Player (Crossfade). Videos werden im Format „cover“ skaliert.
  *
- * Das Overlay konsumiert keine Touches – das Dashboard darunter bleibt bedienbar.
+ * Antippen des Panels blendet den Avatar aus; Touches außerhalb des Panels gehen an das
+ * Dashboard darunter.
  */
 class AvatarOverlayView @JvmOverloads constructor(
     context: Context,
@@ -40,6 +41,11 @@ class AvatarOverlayView @JvmOverloads constructor(
         surfaceA.alpha = 0f
         surfaceB.alpha = 0f
         addView(panel, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.CENTER))
+    }
+
+    /** Antippen des Avatar-Panels (außerhalb des Panels gehen Touches an das Dashboard). */
+    fun setOnPanelTap(onTap: () -> Unit) {
+        panel.setOnClickListener { onTap() }
     }
 
     /** Seitenverhältnis Breite/Höhe des Panels, z. B. 16/9f oder 9/16f. */

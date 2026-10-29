@@ -6,8 +6,23 @@ import org.json.JSONObject
 /** Parser für die (komprimierten) HA-WebSocket-Nachrichten, die der Avatar braucht. */
 object HaMessages {
 
-    /** Ein Zustands-Update. [initial] = Teil des Anfangs-Snapshots („a“), keine echte Änderung. */
-    data class StateUpdate(val entityId: String, val state: String?, val initial: Boolean)
+    /**
+     * Ein Zustands-Update. [initial] = Teil des Anfangs-Snapshots („a“), keine echte Änderung.
+     * [lastChangedEpochMs] = HAs last_changed („lc“), falls mitgeliefert.
+     */
+    data class StateUpdate(
+        val entityId: String,
+        val state: String?,
+        val initial: Boolean,
+        val lastChangedEpochMs: Long? = null,
+    )
+
+    private fun lastChanged(o: JSONObject?): Long? {
+        if (o == null) return null
+        // Komprimiertes Format: "lc" fehlt, wenn es gleich "lu" (last_updated) ist.
+        val lc = o.optDouble("lc", o.optDouble("lu", Double.NaN))
+        return if (lc.isNaN()) null else (lc * 1000).toLong()
+    }
 
     /**
      * Wertet ein `subscribe_entities`-Event aus:
@@ -19,15 +34,15 @@ object HaMessages {
         val out = ArrayList<StateUpdate>()
         event.optJSONObject("a")?.let { added ->
             for (id in added.keys()) {
-                val s = added.optJSONObject(id)?.opt("s")
-                out += StateUpdate(id, s?.toString(), initial = true)
+                val o = added.optJSONObject(id)
+                out += StateUpdate(id, o?.opt("s")?.toString(), initial = true, lastChangedEpochMs = lastChanged(o))
             }
         }
         event.optJSONObject("c")?.let { changed ->
             for (id in changed.keys()) {
                 val plus = changed.optJSONObject(id)?.optJSONObject("+") ?: continue
                 if (!plus.has("s")) continue
-                out += StateUpdate(id, plus.opt("s")?.toString(), initial = false)
+                out += StateUpdate(id, plus.opt("s")?.toString(), initial = false, lastChangedEpochMs = lastChanged(plus))
             }
         }
         event.optJSONArray("r")?.let { removed ->

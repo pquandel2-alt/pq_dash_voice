@@ -41,11 +41,12 @@ class AvatarController(
     private var crossfadeMs = 200L
     private var trimFrames = 1
 
-    private val satellites = HashMap<String, String?>()
+    private val satellites = SatelliteTracker()
     private var lastClipValue: String? = null
 
     private val tick = object : Runnable {
         override fun run() {
+            updateAggregate()   // Hänger-Limits laufen zeitabhängig ab
             playback?.sync()
             if (playback != null) ui.postDelayed(this, TICK_MS)
         }
@@ -61,6 +62,18 @@ class AvatarController(
     val isActive: Boolean get() = enabled && !library.isEmpty
 
     val isVisible: Boolean get() = playback != null
+
+    init {
+        overlay.setOnPanelTap { dismiss() }
+    }
+
+    /** Antippen: Avatar sofort ausblenden, bis ein Satellit wieder aktiv wird. */
+    fun dismiss() {
+        if (playback == null || fadingOut) return
+        Log.i(TAG, "Avatar weggetippt")
+        machine.dismiss()
+        onPlaybackEnded()
+    }
 
     /** Liest die Einstellungen (neu) und startet/stoppt Verbindung und Cache-Sync bei Bedarf. */
     fun applySettings() {
@@ -127,12 +140,22 @@ class AvatarController(
     override fun onUpdates(updates: List<HaMessages.StateUpdate>) = apply(updates)
 
     override fun onConnectionChanged(connected: Boolean) {
-        if (!connected && satellites.isNotEmpty()) {
+        if (!connected && satellites.size > 0) {
             // Ohne Verbindung keine verlässlichen Zustände → als idle behandeln (blendet nach Nachlauf aus).
             satellites.clear()
             machine.onAssistState(AssistState.IDLE)
             evaluate()
         }
+    }
+
+    private fun updateAggregate() {
+        val now = SystemClock.elapsedRealtime()
+        val aggregate = satellites.aggregate(now)
+        if (aggregate != machine.assistState) {
+            val stale = satellites.staleIds(now)
+            Log.i(TAG, "Satelliten → $aggregate${if (stale.isNotEmpty()) " (hängend ignoriert: ${stale.joinToString()})" else ""}")
+        }
+        machine.onAssistState(aggregate)
     }
 
     private fun apply(updates: List<HaMessages.StateUpdate>) {
@@ -142,12 +165,13 @@ class AvatarController(
                 u.entityId == nightEntity -> machine.onNightMode(u.state == "on")
                 u.entityId == clipEntity -> onClipValue(u)
                 u.entityId.startsWith(satellitePrefix) ->
-                    if (u.state == null) satellites.remove(u.entityId) else satellites[u.entityId] = u.state
+                    satellites.update(
+                        u.entityId, u.state, SystemClock.elapsedRealtime(),
+                        u.lastChangedEpochMs?.let { System.currentTimeMillis() - it } ?: 0L,
+                    )
             }
         }
-        val aggregate = AssistState.aggregateHa(satellites.values)
-        if (aggregate != machine.assistState) Log.i(TAG, "Satelliten → $aggregate $satellites")
-        machine.onAssistState(aggregate)
+        updateAggregate()
         evaluate()
     }
 
