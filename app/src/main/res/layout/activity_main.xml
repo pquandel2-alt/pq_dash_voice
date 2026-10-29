@@ -174,8 +174,16 @@
         </LinearLayout>
     </FrameLayout>
 
+    <!-- KI-Video-Avatar: eingeblendet, solange ein assist_satellite in HA aktiv ist -->
+    <cc.quandel.dashvoice.avatar.AvatarOverlayView
+        android:id="@+id/avatarOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <ScrollView
         android:id="@+id/logScroll"
+        android:translationZ="16dp"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="#E6000000"
@@ -224,6 +232,7 @@
     <!-- Klingel-Kamera-Overlay (vollbild Lovelace-Ansicht mit Live-Stream) -->
     <FrameLayout
         android:id="@+id/doorbellOverlay"
+        android:translationZ="16dp"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="#FF000000"

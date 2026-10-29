@@ -370,6 +370,159 @@
             android:layout_height="wrap_content"
             android:text="Antwort im Screensaver anzeigen" />
 
+        <!-- ── KI-Video-Avatar ── -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp"
+            android:background="#33000000" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="KI-Video-Avatar"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Erscheint, sobald irgendein assist_satellite in Home Assistant aktiv ist. Nutzt HA-Basis-URL (aus der Dashboard-URL) und HA-Token. Clips werden lokal zwischengespeichert und nur bei Änderung neu geladen."
+            android:textColor="#88000000"
+            android:textSize="12sp" />
+
+        <CheckBox
+            android:id="@+id/avatarEnabled"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Video-Avatar aktivieren" />
+
+        <CheckBox
+            android:id="@+id/avatarAlwaysShow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Avatar immer anzeigen" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Clip-Pfad auf dem HA-Server" />
+        <EditText
+            android:id="@+id/avatarClipPath"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="/local/avatar/"
+            android:inputType="textUri" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Satelliten-Präfix" />
+        <EditText
+            android:id="@+id/avatarSatellitePrefix"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="assist_satellite."
+            android:inputType="text" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Nachtmodus-Entität (on = Schlafen, wenn alles idle)" />
+        <EditText
+            android:id="@+id/avatarNightEntity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="input_boolean.avatar_nacht"
+            android:inputType="text" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="One-Shot-Entität (Wert „&lt;szene&gt; &lt;zeitstempel&gt;“)" />
+        <EditText
+            android:id="@+id/avatarClipEntity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="input_text.avatar_clip"
+            android:inputType="text" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Weitere Szenen/Clips (kommagetrennt, z. B. wave, party.mp4)" />
+        <EditText
+            android:id="@+id/avatarExtraClips"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Nachlauf nach Rückkehr zu idle (Sekunden)" />
+        <EditText
+            android:id="@+id/avatarLingerSec"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="4"
+            android:inputType="numberDecimal" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Sofortwechsel ab Restlaufzeit (ms)" />
+        <EditText
+            android:id="@+id/avatarUrgentMs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="600"
+            android:inputType="number" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Crossfade-Dauer bei Sofortwechsel (ms)" />
+        <EditText
+            android:id="@+id/avatarCrossfadeMs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="200"
+            android:inputType="number" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Frames am Clipende überspringen" />
+        <Spinner
+            android:id="@+id/avatarTrimFrames"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Seitenverhältnis" />
+        <Spinner
+            android:id="@+id/avatarAspect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Größe" />
+        <Spinner
+            android:id="@+id/avatarSize"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" />
+
         <!-- ── Standard-Launcher ── -->
         <View
             android:layout_width="match_parent"
