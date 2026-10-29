@@ -41,6 +41,8 @@ class VoiceService : Service(), WyomingServer.Listener {
 
     @Volatile private var state = State.IDLE
     @Volatile private var satelliteActive = false
+    /** Tablet ist Sprachsatellit (Prefs.satelliteEnabled). Aus: kein Mikrofon, kein Wyoming-Server. */
+    @Volatile private var satelliteMode = false
     @Volatile private var manualPipeline = false
     @Volatile private var ignoreTtsChunks = false
     private var captureNoiseSuppression = true
@@ -91,7 +93,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             handler.post {
-                if (!server.isConnected) {
+                if (satelliteMode && !server.isConnected) {
                     Log.i(TAG, "Netzwerk verfügbar — Wyoming-Server neu starten")
                     server.stop()
                     server.start()
@@ -114,13 +116,15 @@ class VoiceService : Service(), WyomingServer.Listener {
     private val watchdog = object : Runnable {
         override fun run() {
             try {
-                if (!server.isListening) {
+                if (satelliteMode && !server.isListening) {
                     Log.w(TAG, "Watchdog: Wyoming-Server lauscht nicht — Neustart")
                     server.stop()
                     server.start()
                 }
-                capture.healthIssue(AUDIO_FRAME_TIMEOUT_MS)?.let { issue ->
-                    restartAudioCapture("Watchdog: $issue")
+                if (satelliteMode) {
+                    capture.healthIssue(AUDIO_FRAME_TIMEOUT_MS)?.let { issue ->
+                        restartAudioCapture("Watchdog: $issue")
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Watchdog-Fehler: ${e.message}")
@@ -145,15 +149,19 @@ class VoiceService : Service(), WyomingServer.Listener {
         captureNoiseSuppression = prefs.noiseSuppressionEnabled
         capture = AudioCapture(gain = prefs.micGain, noiseSuppression = captureNoiseSuppression)
         server = WyomingServer(prefs.satellitePort, prefs.satelliteName, this)
-        server.start()
-        registerWyomingService()
+        satelliteMode = prefs.satelliteEnabled
+        if (satelliteMode) {
+            server.start()
+            registerWyomingService()
+        }
 
         val networkRequest = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
         connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
 
-        startAudioCapture()
+        if (satelliteMode) startAudioCapture()
+        else Log.i(TAG, "Sprachsatellit deaktiviert – Mikrofon und Wyoming-Server bleiben aus")
         handler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
         RestartReceiver.schedule(this)
         battery = BatteryReporter(this, prefs.dashboardUrl, prefs.haToken, prefs.satelliteName)
@@ -197,9 +205,45 @@ class VoiceService : Service(), WyomingServer.Listener {
         setIdle()
         server.stop()
         capture.stop()
-        server.start()
         capture = AudioCapture(gain = prefs.micGain, noiseSuppression = captureNoiseSuppression)
+        if (!satelliteMode) return
+        server.start()
         startAudioCapture()
+    }
+
+    /** Sprachsatellit zur Laufzeit ein-/ausschalten (aus den Einstellungen). */
+    private fun applySatelliteMode() {
+        val wanted = prefs.satelliteEnabled
+        if (wanted == satelliteMode) return
+        satelliteMode = wanted
+        if (wanted) {
+            Log.i(TAG, "Sprachsatellit eingeschaltet")
+            server.start()
+            registerWyomingService()
+            capture = AudioCapture(gain = prefs.micGain, noiseSuppression = captureNoiseSuppression)
+            startAudioCapture()
+        } else {
+            Log.i(TAG, "Sprachsatellit ausgeschaltet – Mikrofon und Wyoming-Server gestoppt")
+            satelliteActive = false
+            manualPipeline = false
+            handler.removeCallbacks(ttsTimeoutRunnable)
+            player.stop()
+            abandonTtsFocus()
+            setIdle()
+            capture.stop()
+            server.stop()
+            unregisterWyomingService()
+        }
+    }
+
+    private fun unregisterWyomingService() {
+        nsdRegistrationListener?.let {
+            try {
+                nsdManager.unregisterService(it)
+            } catch (_: Exception) {
+            }
+        }
+        nsdRegistrationListener = null
     }
 
     /** Log enough signal information to distinguish silence, clipping and an HA/VAD timeout. */
@@ -220,7 +264,7 @@ class VoiceService : Service(), WyomingServer.Listener {
     /** Manual mic button: still no local recognition; the stream starts directly at HA STT. */
     @Synchronized
     private fun triggerManualPipeline() {
-        if (!server.isConnected || state == State.SPEAKING) return
+        if (!satelliteMode || !server.isConnected || state == State.SPEAKING) return
         Log.i(TAG, "tap-to-talk → HA Assist pipeline")
         manualPipeline = true
         server.sendRunPipelineManual()
@@ -465,6 +509,8 @@ class VoiceService : Service(), WyomingServer.Listener {
     }
 
     private fun applySettings() {
+        applySatelliteMode()
+        if (!satelliteMode) return
         capture.gain = prefs.micGain
         if (prefs.noiseSuppressionEnabled != captureNoiseSuppression) {
             captureNoiseSuppression = prefs.noiseSuppressionEnabled
@@ -493,13 +539,7 @@ class VoiceService : Service(), WyomingServer.Listener {
         capture.stop()
         player.stop()
         server.stop()
-        nsdRegistrationListener?.let {
-            try {
-                nsdManager.unregisterService(it)
-            } catch (_: Exception) {
-            }
-        }
-        nsdRegistrationListener = null
+        unregisterWyomingService()
         ringer?.stop()
         battery?.stop()
         abandonTtsFocus()

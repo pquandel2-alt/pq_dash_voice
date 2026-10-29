@@ -46,6 +46,13 @@
             android:layout_height="wrap_content"
             android:inputType="text" />
 
+        <CheckBox
+            android:id="@+id/satelliteEnabled"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Tablet als Sprachsatellit (Mikrofon, Wake Word, Tap-to-Talk)" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -426,6 +433,17 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="assist_satellite."
+            android:inputType="text" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Ignorierte Satelliten (kommagetrennt)" />
+        <EditText
+            android:id="@+id/avatarIgnoredSatellites"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="assist_satellite.wand_tablet"
             android:inputType="text" />
         <TextView
             android:layout_width="wrap_content"

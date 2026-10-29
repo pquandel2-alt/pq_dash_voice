@@ -38,6 +38,7 @@ class AvatarController(
     private var nightEntity = ""
     private var clipEntity = ""
     private var satellitePrefix = ""
+    private var ignoredSatellites: Set<String> = emptySet()
     private var crossfadeMs = 200L
     private var trimFrames = 1
 
@@ -103,6 +104,9 @@ class AvatarController(
         nightEntity = prefs.avatarNightEntity.trim()
         clipEntity = prefs.avatarClipEntity.trim()
         satellitePrefix = prefs.avatarSatellitePrefix.trim().ifEmpty { Prefs.DEFAULT_AVATAR_PREFIX }
+        ignoredSatellites = prefs.avatarIgnoredSatellites.split(',', ';', ' ', '\n')
+            .map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        ignoredSatellites.forEach { satellites.update(it, null, 0L) }
         val newConnectionKey = listOf(baseUrl, token, satellitePrefix, nightEntity, clipEntity).joinToString("\n")
         if (newConnectionKey != connectionKey || ws == null) {
             stopConnection()
@@ -164,6 +168,7 @@ class AvatarController(
             when {
                 u.entityId == nightEntity -> machine.onNightMode(u.state == "on")
                 u.entityId == clipEntity -> onClipValue(u)
+                u.entityId in ignoredSatellites -> Unit
                 u.entityId.startsWith(satellitePrefix) ->
                     satellites.update(
                         u.entityId, u.state, SystemClock.elapsedRealtime(),

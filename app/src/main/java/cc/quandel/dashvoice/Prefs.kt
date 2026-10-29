@@ -16,6 +16,14 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_PORT, DEFAULT_PORT)
         set(v) = sp.edit().putInt(KEY_PORT, v).apply()
 
+    /**
+     * Tablet als eigener Wyoming-Sprachsatellit (Mikrofon, Wake Word, Tap-to-Talk, TTS).
+     * Aus = Tablet hört nicht zu; der Video-Avatar zeigt nur die anderen Satelliten.
+     */
+    var satelliteEnabled: Boolean
+        get() = sp.getBoolean(KEY_SATELLITE_ENABLED, false)
+        set(v) = sp.edit().putBoolean(KEY_SATELLITE_ENABLED, v).apply()
+
     var satelliteName: String
         get() = sp.getString(KEY_NAME, DEFAULT_NAME) ?: DEFAULT_NAME
         set(v) = sp.edit().putString(KEY_NAME, v).apply()
@@ -181,6 +189,11 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_AVATAR_CLIP_ENTITY, DEFAULT_AVATAR_CLIP_ENTITY) ?: DEFAULT_AVATAR_CLIP_ENTITY
         set(v) = sp.edit().putString(KEY_AVATAR_CLIP_ENTITY, v).apply()
 
+    /** Satelliten, die den Avatar nie auslösen (kommagetrennte Entity-IDs). */
+    var avatarIgnoredSatellites: String
+        get() = sp.getString(KEY_AVATAR_IGNORED, "") ?: ""
+        set(v) = sp.edit().putString(KEY_AVATAR_IGNORED, v).apply()
+
     /** Zusätzliche Szenen-Basisnamen (z. B. "wave") oder Dateinamen (z. B. "party.mp4"), kommagetrennt. */
     var avatarExtraClips: String
         get() = sp.getString(KEY_AVATAR_EXTRA, "") ?: ""
@@ -258,6 +271,8 @@ class Prefs(context: Context) {
         private const val KEY_PARTICLE_ASSEMBLY_ANIM = "particle_assembly_anim"
         private const val KEY_PARTICLE_ANIM_SPEED = "particle_anim_speed"
         private const val KEY_AVATAR_ENABLED = "avatar_enabled"
+        private const val KEY_AVATAR_IGNORED = "avatar_ignored_satellites"
+        private const val KEY_SATELLITE_ENABLED = "satellite_enabled"
         private const val KEY_AVATAR_PATH = "avatar_clip_path"
         private const val KEY_AVATAR_PREFIX = "avatar_satellite_prefix"
         private const val KEY_AVATAR_NIGHT = "avatar_night_entity"

@@ -251,6 +251,7 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<ImageButton>(R.id.micButton).apply {
             setOnClickListener {
+                if (!prefs.satelliteEnabled) return@setOnClickListener   // Tablet hört nicht zu
                 AppLog.i("UI", "Tap-to-Talk gedrückt")
                 VoiceService.talk(this@MainActivity)
             }
@@ -883,6 +884,8 @@ class MainActivity : AppCompatActivity() {
         enterImmersive()
         // Nach Rückkehr aus den Einstellungen geänderte Avatar-Optionen übernehmen.
         avatarController?.applySettings()
+        // Ohne Sprachsatellit ist der Mikrofon-Knopf nur noch der (Lang-drücken-)Zugang zu den Einstellungen.
+        findViewById<ImageButton>(R.id.micButton).alpha = if (prefs.satelliteEnabled) 1f else 0.25f
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

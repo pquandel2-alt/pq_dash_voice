@@ -169,6 +169,11 @@ class SettingsActivity : AppCompatActivity() {
         val particleShowResponse = findViewById<CheckBox>(R.id.particleShowResponse)
         particleShowResponse.isChecked = prefs.particleShowResponse
 
+        val satelliteEnabled = findViewById<CheckBox>(R.id.satelliteEnabled)
+        satelliteEnabled.isChecked = prefs.satelliteEnabled
+        val avatarIgnored = findViewById<EditText>(R.id.avatarIgnoredSatellites)
+        avatarIgnored.setText(prefs.avatarIgnoredSatellites)
+
         // ── KI-Video-Avatar ──
         val avatarEnabled = findViewById<CheckBox>(R.id.avatarEnabled)
         val avatarAlwaysShow = findViewById<CheckBox>(R.id.avatarAlwaysShow)
@@ -248,6 +253,8 @@ class SettingsActivity : AppCompatActivity() {
             prefs.particleAnimationSpeed = particleSpeedBar.progress / 100f + 0.5f
             prefs.particleShowTranscript = particleShowTranscript.isChecked
             prefs.particleShowResponse = particleShowResponse.isChecked
+            prefs.satelliteEnabled = satelliteEnabled.isChecked
+            prefs.avatarIgnoredSatellites = avatarIgnored.text.toString().trim()
             prefs.avatarEnabled = avatarEnabled.isChecked
             prefs.avatarAlwaysShow = avatarAlwaysShow.isChecked
             prefs.avatarClipPath = avatarClipPath.text.toString().trim().ifEmpty { Prefs.DEFAULT_AVATAR_PATH }
