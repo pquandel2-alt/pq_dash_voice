@@ -1,5 +1,7 @@
 package cc.quandel.dashvoice.avatar
 
+import kotlin.random.Random
+
 /**
  * Reine Zustandslogik des Video-Avatars (keine Android-Abhängigkeiten, vollständig unit-testbar).
  *
@@ -17,6 +19,7 @@ class AvatarStateMachine(
     /** Gibt es für die Szene mindestens einen Clip? */
     private val available: (String) -> Boolean = { true },
     private val clock: () -> Long,
+    private val random: Random = Random.Default,
 ) {
     data class Config(
         /** Wie lange nach der letzten Aktivität noch der idle-Loop gezeigt wird. */
@@ -25,6 +28,10 @@ class AvatarStateMachine(
         val urgentThresholdMs: Long = 600L,
         /** Avatar dauerhaft zeigen (auch komplett idle). */
         val alwaysShow: Boolean = false,
+        /** Wahrscheinlichkeit, dass nach einem idle-Clip eine Bewegung (accent) statt idle folgt. */
+        val accentChance: Float = 0.35f,
+        /** Szenen, die den idle-Loop beleben (Umschauen, Lächeln …). */
+        val accents: List<String> = listOf("look_left", "look_right", "happy"),
     )
 
     enum class Pose { AWAKE, ASLEEP }
@@ -47,6 +54,11 @@ class AvatarStateMachine(
         private set
 
     private var activityEndedAt: Long? = null
+
+    /** Für den nächsten Clip bereits ausgewürfelte idle-/accent-Szene (damit sync() nicht flackert). */
+    private var idlePlan: String? = null
+    private var lastWasAccent = false
+    private var lastAccent: String? = null
 
     val isPlaying: Boolean get() = currentScene != null
 
@@ -104,6 +116,9 @@ class AvatarStateMachine(
         currentIsOneShot = pendingOneShot != null && scene == pendingOneShot
         if (currentIsOneShot) pendingOneShot = null
         currentScene = scene
+        idlePlan = null
+        lastWasAccent = scene in config.accents || currentIsOneShot
+        if (scene in config.accents) lastAccent = scene
     }
 
     /** Vom Player: Wiedergabe beendet, Overlay ausgeblendet, Player freigegeben. */
@@ -149,7 +164,7 @@ class AvatarStateMachine(
         pendingOneShot?.let { return it }
         if (!visible) return null                           // auf dem Home-Frame ausblenden
         if (wantsSleep()) return AvatarScenes.SLEEP_IN
-        return resolve(AvatarScenes.IDLE)
+        return idleOrAccent()
     }
 
     /**
@@ -158,11 +173,34 @@ class AvatarStateMachine(
      */
     fun urgentSwitch(remainingMs: Long): String? {
         val current = currentScene ?: return null
-        if (remainingMs <= config.urgentThresholdMs) return null
-        if (current == AvatarScenes.WAKE_UP) return null    // Aufwachen nie abbrechen
-        val next = nextScene(remainingMs) ?: return null
-        if (next !in URGENT || next == current) return null
-        return next
+        if (dismissed || remainingMs <= config.urgentThresholdMs) return null
+        var next = nextScene(remainingMs)
+        // Zustandsclip (speaking …) und Aktivität vorbei, ohne Nachlauf: erst auf idle, dort wird ausgeblendet.
+        if (next == null && current in STATE_SCENES && assistState == AssistState.IDLE) next = resolve(AvatarScenes.IDLE)
+        if (next == null || next == current) return null
+        return if (isUrgent(current, next)) next else null
+    }
+
+    /**
+     * Zustandsclips (listening/thinking/speaking) müssen dem Zustand sofort folgen – sonst
+     * spricht der Mund weiter, obwohl die Antwort vorbei ist, oder thinking/speaking werden
+     * bei ~10 s langen Clips komplett übersprungen. idle, Bewegungen und One-Shots weichen
+     * einer Aktivität. Ein- und Ausschlafen wird nie abgebrochen (wake_up nur aus dem sleep-Loop).
+     */
+    private fun isUrgent(current: String, next: String): Boolean {
+        if (current == AvatarScenes.WAKE_UP || current == AvatarScenes.SLEEP_IN) return false
+        if (next == AvatarScenes.WAKE_UP) return current == AvatarScenes.SLEEP
+        if (current in STATE_SCENES) return true
+        return next in STATE_SCENES
+    }
+
+    /** Wahrscheinlichster nächster Sofortwechsel – der zweite Player lädt diesen Clip vor. */
+    fun likelyUrgentScene(): String = when (currentScene) {
+        AvatarScenes.SLEEP_IN, AvatarScenes.SLEEP -> AvatarScenes.WAKE_UP
+        AvatarScenes.LISTENING -> AvatarScenes.THINKING
+        AvatarScenes.THINKING -> AvatarScenes.SPEAKING
+        AvatarScenes.SPEAKING -> AvatarScenes.IDLE
+        else -> AvatarScenes.LISTENING
     }
 
     // ── intern ──────────────────────────────────────────────────────────────────────────────
@@ -183,6 +221,19 @@ class AvatarStateMachine(
     private fun hasSleepClips(): Boolean =
         available(AvatarScenes.SLEEP_IN) && available(AvatarScenes.SLEEP) && available(AvatarScenes.WAKE_UP)
 
+    /** idle oder – mit Wahrscheinlichkeit [Config.accentChance] – eine Bewegung; nie zwei hintereinander. */
+    private fun idleOrAccent(): String? {
+        idlePlan?.let { return it }
+        val idle = resolve(AvatarScenes.IDLE)
+        val candidates = config.accents.filter { available(it) && it != lastAccent }
+            .ifEmpty { config.accents.filter { available(it) } }
+        val plan = if (idle == null || lastWasAccent || candidates.isEmpty() ||
+            random.nextFloat() >= config.accentChance
+        ) idle else candidates[random.nextInt(candidates.size)]
+        idlePlan = plan
+        return plan
+    }
+
     private fun resolve(scene: String): String? = when {
         available(scene) -> scene
         available(AvatarScenes.IDLE) -> AvatarScenes.IDLE
@@ -190,6 +241,6 @@ class AvatarStateMachine(
     }
 
     companion object {
-        val URGENT = setOf(AvatarScenes.LISTENING, AvatarScenes.WAKE_UP)
+        val STATE_SCENES = setOf(AvatarScenes.LISTENING, AvatarScenes.THINKING, AvatarScenes.SPEAKING)
     }
 }

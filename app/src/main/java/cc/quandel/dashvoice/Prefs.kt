@@ -194,6 +194,16 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_AVATAR_IGNORED, "") ?: ""
         set(v) = sp.edit().putString(KEY_AVATAR_IGNORED, v).apply()
 
+    /** Idle-Bewegungen: 0 = aus, 1 = selten, 2 = normal, 3 = oft. */
+    var avatarIdleMotion: Int
+        get() = sp.getInt(KEY_AVATAR_MOTION, 2)
+        set(v) = sp.edit().putInt(KEY_AVATAR_MOTION, v).apply()
+
+    /** Szenen, die den idle-Loop beleben (kommagetrennt). */
+    var avatarAccentScenes: String
+        get() = sp.getString(KEY_AVATAR_ACCENTS, DEFAULT_AVATAR_ACCENTS) ?: DEFAULT_AVATAR_ACCENTS
+        set(v) = sp.edit().putString(KEY_AVATAR_ACCENTS, v).apply()
+
     /** Zusätzliche Szenen-Basisnamen (z. B. "wave") oder Dateinamen (z. B. "party.mp4"), kommagetrennt. */
     var avatarExtraClips: String
         get() = sp.getString(KEY_AVATAR_EXTRA, "") ?: ""
@@ -238,6 +248,7 @@ class Prefs(context: Context) {
         const val DEFAULT_NAME = "Wand-Tablet"
         const val DEFAULT_SCREENSAVER_DELAY = 120_000L
         const val DEFAULT_PARTICLE_ASSIST_MIN_VISIBLE_MS = 5_000L
+        const val DEFAULT_AVATAR_ACCENTS = "look_left, look_right, happy"
         const val DEFAULT_AVATAR_PATH = "/local/avatar/"
         const val DEFAULT_AVATAR_PREFIX = "assist_satellite."
         const val DEFAULT_AVATAR_NIGHT = "input_boolean.avatar_nacht"
@@ -271,6 +282,8 @@ class Prefs(context: Context) {
         private const val KEY_PARTICLE_ASSEMBLY_ANIM = "particle_assembly_anim"
         private const val KEY_PARTICLE_ANIM_SPEED = "particle_anim_speed"
         private const val KEY_AVATAR_ENABLED = "avatar_enabled"
+        private const val KEY_AVATAR_MOTION = "avatar_idle_motion"
+        private const val KEY_AVATAR_ACCENTS = "avatar_accent_scenes"
         private const val KEY_AVATAR_IGNORED = "avatar_ignored_satellites"
         private const val KEY_SATELLITE_ENABLED = "satellite_enabled"
         private const val KEY_AVATAR_PATH = "avatar_clip_path"

@@ -481,6 +481,27 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
+            android:text="Idle-Bewegungen (Umschauen, Lächeln …)" />
+        <Spinner
+            android:id="@+id/avatarIdleMotion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Szenen für Idle-Bewegungen (kommagetrennt)" />
+        <EditText
+            android:id="@+id/avatarAccentScenes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="look_left, look_right, happy"
+            android:inputType="text" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
             android:text="Nachlauf nach Rückkehr zu idle (Sekunden)" />
         <EditText
             android:id="@+id/avatarLingerSec"

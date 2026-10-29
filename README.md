@@ -92,6 +92,13 @@ data:
   value: "happy {{ now().timestamp() }}"
 ```
 
+**Lebendigkeit:** Im idle-Loop mischt der Avatar zufällig Bewegungen (`look_left`, `look_right`,
+`happy`, in den Einstellungen änderbar) unter die idle-Clips: nie zwei Bewegungen hintereinander,
+nie dieselbe Bewegung zweimal in Folge, Häufigkeit einstellbar (aus/selten/normal/oft).
+Zustandsclips (listening, thinking, speaking) folgen dem Satellitenzustand sofort per Crossfade –
+bei ~10 s langen Clips würden kurze Zustände sonst übersprungen und der Mund würde nach Ende der
+Antwort weitersprechen. Der wahrscheinlichste Folgeclip wird im zweiten Player vorgeladen.
+
 **Übergänge:** Alle Wach-Clips beginnen und enden auf dem Home-Frame. Der nächste Clip ist
 deshalb immer schon im ExoPlayer vorgeladen und folgt gapless an der Clipgrenze (harter Schnitt,
 das Clipende wird um 1 Frame gekürzt, damit der Home-Frame nicht doppelt steht). Nur listening

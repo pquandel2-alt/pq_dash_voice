@@ -85,9 +85,12 @@ class AvatarPlayback(
             val p = player ?: return
             val scene = sceneOf(mediaItem) ?: return
             machine.onClipStarted(scene)
+            Log.i(TAG, "Clip → $scene (${fileOf(mediaItem)})")
             // Abgespielte Einträge entfernen, Playlist bleibt bei max. 2 Einträgen.
             if (p.currentMediaItemIndex > 0) p.removeMediaItems(0, p.currentMediaItemIndex)
             sync()
+            ui.removeCallbacks(prepareStandby)
+            ui.postDelayed(prepareStandby, STANDBY_DELAY_MS)
         }
 
         override fun onPlaybackStateChanged(state: Int) {
@@ -125,6 +128,7 @@ class AvatarPlayback(
         p.prepare()
         p.playWhenReady = true
         machine.onClipStarted(scene)
+        Log.i(TAG, "Start → $scene (${clip.fileName})")
         sync()
         ui.postDelayed(prepareStandby, STANDBY_DELAY_MS)
         return true
@@ -206,12 +210,10 @@ class AvatarPlayback(
         }
     }
 
-    /** Bereitet im zweiten Player den wahrscheinlichsten dringenden Clip pausiert vor. */
+    /** Bereitet im zweiten Player den wahrscheinlichsten Folgeclip (z. B. listening → thinking) pausiert vor. */
     private fun warmStandby() {
         if (released || crossfading || active.player == null) return
-        val scene = if (machine.poseAfterCurrent == AvatarStateMachine.Pose.ASLEEP ||
-            machine.currentScene == AvatarScenes.SLEEP_IN
-        ) AvatarScenes.WAKE_UP else AvatarScenes.LISTENING
+        val scene = machine.likelyUrgentScene()
         if (standby.standbyScene == scene || !library().has(scene)) return
         val clip = library().pick(scene) ?: return
         val p = standby.ensure()

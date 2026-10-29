@@ -87,6 +87,9 @@ class AvatarController(
             lingerMs = prefs.avatarLingerMs.coerceAtLeast(0L),
             urgentThresholdMs = prefs.avatarUrgentThresholdMs.coerceAtLeast(0L),
             alwaysShow = prefs.avatarAlwaysShow,
+            accentChance = when (prefs.avatarIdleMotion) { 0 -> 0f; 1 -> 0.15f; 3 -> 0.6f; else -> 0.35f },
+            accents = prefs.avatarAccentScenes.split(',', ';', ' ', '\n')
+                .map { it.trim().lowercase() }.filter { it.isNotEmpty() },
         )
         crossfadeMs = prefs.avatarCrossfadeMs.coerceIn(0L, 1_000L)
         trimFrames = prefs.avatarTrimFrames.coerceIn(0, 3)

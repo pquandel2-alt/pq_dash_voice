@@ -196,6 +196,14 @@ class SettingsActivity : AppCompatActivity() {
         avatarUrgent.setText(prefs.avatarUrgentThresholdMs.toString())
         avatarCrossfade.setText(prefs.avatarCrossfadeMs.toString())
 
+        val avatarMotion = findViewById<Spinner>(R.id.avatarIdleMotion)
+        val motionOptions = listOf("Aus", "Selten", "Normal", "Oft")
+        avatarMotion.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, motionOptions)
+            .also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        avatarMotion.setSelection(prefs.avatarIdleMotion.coerceIn(0, motionOptions.size - 1))
+        val avatarAccents = findViewById<EditText>(R.id.avatarAccentScenes)
+        avatarAccents.setText(prefs.avatarAccentScenes)
+
         val avatarTrim = findViewById<Spinner>(R.id.avatarTrimFrames)
         val trimOptions = listOf("0 (aus)", "1 Frame", "2 Frames")
         avatarTrim.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, trimOptions)
@@ -255,6 +263,8 @@ class SettingsActivity : AppCompatActivity() {
             prefs.particleShowResponse = particleShowResponse.isChecked
             prefs.satelliteEnabled = satelliteEnabled.isChecked
             prefs.avatarIgnoredSatellites = avatarIgnored.text.toString().trim()
+            prefs.avatarIdleMotion = avatarMotion.selectedItemPosition
+            prefs.avatarAccentScenes = avatarAccents.text.toString().trim().ifEmpty { Prefs.DEFAULT_AVATAR_ACCENTS }
             prefs.avatarEnabled = avatarEnabled.isChecked
             prefs.avatarAlwaysShow = avatarAlwaysShow.isChecked
             prefs.avatarClipPath = avatarClipPath.text.toString().trim().ifEmpty { Prefs.DEFAULT_AVATAR_PATH }

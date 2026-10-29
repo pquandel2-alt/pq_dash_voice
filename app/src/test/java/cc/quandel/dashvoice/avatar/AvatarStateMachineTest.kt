@@ -2,6 +2,7 @@ package cc.quandel.dashvoice.avatar
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,10 +16,13 @@ class AvatarStateMachineTest {
         lingerMs: Long = 4_000L,
         urgentMs: Long = 600L,
         alwaysShow: Boolean = false,
+        accentChance: Float = 0f,
+        seed: Int = 1,
     ) = AvatarStateMachine(
-        config = AvatarStateMachine.Config(lingerMs, urgentMs, alwaysShow),
+        config = AvatarStateMachine.Config(lingerMs, urgentMs, alwaysShow, accentChance),
         available = { it !in missing },
         clock = { now },
+        random = kotlin.random.Random(seed),
     )
 
     /** Simuliert den Player: spielt die erste Szene an und startet sie. */
@@ -78,7 +82,7 @@ class AvatarStateMachineTest {
         assertEquals("listening", m.nextScene(2_000))            // Loop
         m.onAssistState(AssistState.PROCESSING)
         assertEquals("thinking", m.nextScene(2_000))
-        assertNull(m.urgentSwitch(2_000))                         // processing ist nicht dringend
+        assertEquals("thinking", m.urgentSwitch(2_000))           // Zustandsclips folgen sofort
         m.onAssistState(AssistState.RESPONDING)
         assertEquals("speaking", m.boundary(2_000))
     }
@@ -349,5 +353,130 @@ class AvatarStateMachineTest {
         assertNull(m.startScene())
         assertTrue(m.onOneShot("happy"))
         assertEquals("happy", m.startScene())
+    }
+
+    // ── Zustandsclips folgen sofort ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `thinking and speaking switch immediately instead of at the clip boundary`() {
+        val m = machine()
+        m.onAssistState(AssistState.LISTENING)
+        m.startPlaying()
+        m.onAssistState(AssistState.PROCESSING)
+        assertEquals("thinking", m.urgentSwitch(8_000))
+        m.onClipStarted("thinking")
+        m.onAssistState(AssistState.RESPONDING)
+        assertEquals("speaking", m.urgentSwitch(8_000))
+    }
+
+    @Test
+    fun `speaking stops immediately when the answer is over`() {
+        val m = machine(lingerMs = 4_000)
+        m.onAssistState(AssistState.RESPONDING)
+        m.startPlaying()
+        now += 3_000
+        m.onAssistState(AssistState.IDLE)
+        assertEquals("idle", m.urgentSwitch(7_000))
+    }
+
+    @Test
+    fun `speaking without linger still leaves the speaking clip at once`() {
+        val m = machine(lingerMs = 0)
+        m.onAssistState(AssistState.RESPONDING)
+        m.startPlaying()
+        m.onAssistState(AssistState.IDLE)
+        assertEquals("idle", m.urgentSwitch(7_000))
+        m.onClipStarted("idle")
+        assertNull(m.nextScene(5_000))                              // dort wird ausgeblendet
+    }
+
+    @Test
+    fun `short remaining time waits for the boundary`() {
+        val m = machine(urgentMs = 600)
+        m.onAssistState(AssistState.RESPONDING)
+        m.startPlaying()
+        m.onAssistState(AssistState.IDLE)
+        assertNull(m.urgentSwitch(500))
+    }
+
+    @Test
+    fun `activity interrupts an accent clip`() {
+        val m = machine(alwaysShow = true)
+        m.onOneShot("look_left")
+        m.startPlaying()                                            // one-shot look_left
+        m.onAssistState(AssistState.LISTENING)
+        assertEquals("listening", m.urgentSwitch(6_000))
+    }
+
+    @Test
+    fun `sleep_in is never interrupted but queues wake_up`() {
+        val m = machine(alwaysShow = true)
+        m.onNightMode(true)
+        assertEquals("sleep_in", m.startPlaying())
+        m.onAssistState(AssistState.LISTENING)
+        assertNull(m.urgentSwitch(5_000))
+        assertEquals("wake_up", m.nextScene(5_000))
+    }
+
+    @Test
+    fun `likely next urgent scene follows the conversation`() {
+        val m = machine(alwaysShow = true)
+        m.startPlaying()
+        assertEquals("listening", m.likelyUrgentScene())
+        m.onClipStarted("listening"); assertEquals("thinking", m.likelyUrgentScene())
+        m.onClipStarted("thinking"); assertEquals("speaking", m.likelyUrgentScene())
+        m.onClipStarted("speaking"); assertEquals("idle", m.likelyUrgentScene())
+    }
+
+    // ── Idle-Bewegungen ─────────────────────────────────────────────────────────────────────
+
+    private val accents = setOf("look_left", "look_right", "happy")
+
+    @Test
+    fun `idle is enlivened by accents but never two in a row`() {
+        val m = machine(alwaysShow = true, accentChance = 1f)
+        assertEquals("idle", m.startPlaying())
+        val sequence = (1..40).map { m.boundary(10_000)!! }
+        sequence.chunked(2).forEach { (a, b) ->
+            assertTrue("accent erwartet: $a", a in accents)
+            assertEquals("idle", b)
+        }
+        assertEquals(accents, sequence.filter { it in accents }.toSet())
+    }
+
+    @Test
+    fun `consecutive accents differ`() {
+        val m = machine(alwaysShow = true, accentChance = 1f)
+        m.startPlaying()
+        val a = (1..60).map { m.boundary(10_000)!! }.filter { it != "idle" }
+        a.zipWithNext().forEach { (x, y) -> assertNotEquals(x, y) }
+    }
+
+    @Test
+    fun `accent choice is stable until the next clip starts`() {
+        val m = machine(alwaysShow = true, accentChance = 1f)
+        m.startPlaying()
+        val first = m.nextScene(9_000)
+        repeat(20) { assertEquals(first, m.nextScene(9_000 - it * 100L)) }
+    }
+
+    @Test
+    fun `chance zero or missing accent clips keep plain idle`() {
+        val off = machine(alwaysShow = true, accentChance = 0f)
+        off.startPlaying()
+        repeat(20) { assertEquals("idle", off.boundary(10_000)) }
+        missing += accents
+        val none = machine(alwaysShow = true, accentChance = 1f)
+        none.startPlaying()
+        repeat(20) { assertEquals("idle", none.boundary(10_000)) }
+    }
+
+    @Test
+    fun `accents are fair over many clips`() {
+        val m = machine(alwaysShow = true, accentChance = 0.35f, seed = 7)
+        m.startPlaying()
+        val seq = (1..600).map { m.boundary(10_000)!! }
+        val ratio = seq.count { it in accents } / seq.size.toDouble()
+        assertTrue("Anteil $ratio", ratio in 0.15..0.35)            // nach idle-Clips, nie zwei hintereinander
     }
 }
