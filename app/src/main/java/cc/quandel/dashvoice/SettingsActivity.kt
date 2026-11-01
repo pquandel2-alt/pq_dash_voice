@@ -12,6 +12,7 @@ import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import java.util.Locale
 
 /** Minimal configuration screen (long-press the mic button to open). */
 class SettingsActivity : AppCompatActivity() {
@@ -33,6 +34,8 @@ class SettingsActivity : AppCompatActivity() {
         "10 Sekunden" to 10_000L,
         "15 Sekunden" to 15_000L,
     )
+
+    private val avatarSizeOptions = listOf(100, 75, 50, 33)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -166,6 +169,59 @@ class SettingsActivity : AppCompatActivity() {
         val particleShowResponse = findViewById<CheckBox>(R.id.particleShowResponse)
         particleShowResponse.isChecked = prefs.particleShowResponse
 
+        val satelliteEnabled = findViewById<CheckBox>(R.id.satelliteEnabled)
+        satelliteEnabled.isChecked = prefs.satelliteEnabled
+        val avatarIgnored = findViewById<EditText>(R.id.avatarIgnoredSatellites)
+        avatarIgnored.setText(prefs.avatarIgnoredSatellites)
+
+        // ── KI-Video-Avatar ──
+        val avatarEnabled = findViewById<CheckBox>(R.id.avatarEnabled)
+        val avatarAlwaysShow = findViewById<CheckBox>(R.id.avatarAlwaysShow)
+        val avatarClipPath = findViewById<EditText>(R.id.avatarClipPath)
+        val avatarPrefix = findViewById<EditText>(R.id.avatarSatellitePrefix)
+        val avatarNight = findViewById<EditText>(R.id.avatarNightEntity)
+        val avatarClipEntity = findViewById<EditText>(R.id.avatarClipEntity)
+        val avatarExtra = findViewById<EditText>(R.id.avatarExtraClips)
+        val avatarLinger = findViewById<EditText>(R.id.avatarLingerSec)
+        val avatarUrgent = findViewById<EditText>(R.id.avatarUrgentMs)
+        val avatarCrossfade = findViewById<EditText>(R.id.avatarCrossfadeMs)
+        avatarEnabled.isChecked = prefs.avatarEnabled
+        avatarAlwaysShow.isChecked = prefs.avatarAlwaysShow
+        avatarClipPath.setText(prefs.avatarClipPath)
+        avatarPrefix.setText(prefs.avatarSatellitePrefix)
+        avatarNight.setText(prefs.avatarNightEntity)
+        avatarClipEntity.setText(prefs.avatarClipEntity)
+        avatarExtra.setText(prefs.avatarExtraClips)
+        avatarLinger.setText("%.1f".format(Locale.US, prefs.avatarLingerMs / 1000f))
+        avatarUrgent.setText(prefs.avatarUrgentThresholdMs.toString())
+        avatarCrossfade.setText(prefs.avatarCrossfadeMs.toString())
+
+        val avatarMotion = findViewById<Spinner>(R.id.avatarIdleMotion)
+        val motionOptions = listOf("Aus", "Selten", "Normal", "Oft")
+        avatarMotion.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, motionOptions)
+            .also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        avatarMotion.setSelection(prefs.avatarIdleMotion.coerceIn(0, motionOptions.size - 1))
+        val avatarAccents = findViewById<EditText>(R.id.avatarAccentScenes)
+        avatarAccents.setText(prefs.avatarAccentScenes)
+
+        val avatarTrim = findViewById<Spinner>(R.id.avatarTrimFrames)
+        val trimOptions = listOf("0 (aus)", "1 Frame", "2 Frames")
+        avatarTrim.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, trimOptions)
+            .also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        avatarTrim.setSelection(prefs.avatarTrimFrames.coerceIn(0, trimOptions.size - 1))
+
+        val avatarAspect = findViewById<Spinner>(R.id.avatarAspect)
+        val aspectOptions = listOf("16:9", "9:16")
+        avatarAspect.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, aspectOptions)
+            .also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        avatarAspect.setSelection(aspectOptions.indexOf(prefs.avatarAspect).coerceAtLeast(0))
+
+        val avatarSize = findViewById<Spinner>(R.id.avatarSize)
+        avatarSize.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, avatarSizeOptions.map { "$it %" },
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        avatarSize.setSelection(avatarSizeOptions.indexOf(prefs.avatarSizePercent).coerceAtLeast(0))
+
         // ── default launcher button ──
         findViewById<Button>(R.id.setDefaultLauncher).setOnClickListener {
             try {
@@ -205,6 +261,24 @@ class SettingsActivity : AppCompatActivity() {
             prefs.particleAnimationSpeed = particleSpeedBar.progress / 100f + 0.5f
             prefs.particleShowTranscript = particleShowTranscript.isChecked
             prefs.particleShowResponse = particleShowResponse.isChecked
+            prefs.satelliteEnabled = satelliteEnabled.isChecked
+            prefs.avatarIgnoredSatellites = avatarIgnored.text.toString().trim()
+            prefs.avatarIdleMotion = avatarMotion.selectedItemPosition
+            prefs.avatarAccentScenes = avatarAccents.text.toString().trim().ifEmpty { Prefs.DEFAULT_AVATAR_ACCENTS }
+            prefs.avatarEnabled = avatarEnabled.isChecked
+            prefs.avatarAlwaysShow = avatarAlwaysShow.isChecked
+            prefs.avatarClipPath = avatarClipPath.text.toString().trim().ifEmpty { Prefs.DEFAULT_AVATAR_PATH }
+            prefs.avatarSatellitePrefix = avatarPrefix.text.toString().trim().ifEmpty { Prefs.DEFAULT_AVATAR_PREFIX }
+            prefs.avatarNightEntity = avatarNight.text.toString().trim()
+            prefs.avatarClipEntity = avatarClipEntity.text.toString().trim()
+            prefs.avatarExtraClips = avatarExtra.text.toString().trim()
+            prefs.avatarLingerMs = ((avatarLinger.text.toString().trim().replace(',', '.').toFloatOrNull() ?: 4f)
+                .coerceIn(0f, 600f) * 1000f).toLong()
+            prefs.avatarUrgentThresholdMs = avatarUrgent.text.toString().trim().toLongOrNull()?.coerceIn(0L, 10_000L) ?: 600L
+            prefs.avatarCrossfadeMs = avatarCrossfade.text.toString().trim().toLongOrNull()?.coerceIn(0L, 1_000L) ?: 200L
+            prefs.avatarTrimFrames = avatarTrim.selectedItemPosition
+            prefs.avatarAspect = aspectOptions[avatarAspect.selectedItemPosition]
+            prefs.avatarSizePercent = avatarSizeOptions[avatarSize.selectedItemPosition]
             // Audio-Einstellungen (Empfindlichkeit/Gain/NS) sofort an den laufenden Dienst übergeben.
             VoiceService.applySettings(this)
             Toast.makeText(this, "Gespeichert – Audio sofort aktiv", Toast.LENGTH_SHORT).show()

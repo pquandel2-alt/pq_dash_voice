@@ -16,6 +16,14 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_PORT, DEFAULT_PORT)
         set(v) = sp.edit().putInt(KEY_PORT, v).apply()
 
+    /**
+     * Tablet als eigener Wyoming-Sprachsatellit (Mikrofon, Wake Word, Tap-to-Talk, TTS).
+     * Aus = Tablet hört nicht zu; der Video-Avatar zeigt nur die anderen Satelliten.
+     */
+    var satelliteEnabled: Boolean
+        get() = sp.getBoolean(KEY_SATELLITE_ENABLED, false)
+        set(v) = sp.edit().putBoolean(KEY_SATELLITE_ENABLED, v).apply()
+
     var satelliteName: String
         get() = sp.getString(KEY_NAME, DEFAULT_NAME) ?: DEFAULT_NAME
         set(v) = sp.edit().putString(KEY_NAME, v).apply()
@@ -157,12 +165,94 @@ class Prefs(context: Context) {
         get() = sp.getFloat(KEY_PARTICLE_ANIM_SPEED, 1.0f)
         set(v) = sp.edit().putFloat(KEY_PARTICLE_ANIM_SPEED, v).apply()
 
+    // ── KI-Video-Avatar ──────────────────────────────────────────────────────────────────
+
+    /** Video-Avatar über der UI, gesteuert über alle assist_satellite-Entitäten in HA. */
+    var avatarEnabled: Boolean
+        get() = sp.getBoolean(KEY_AVATAR_ENABLED, true)
+        set(v) = sp.edit().putBoolean(KEY_AVATAR_ENABLED, v).apply()
+
+    /** Pfad der Clips relativ zur HA-Basis-URL (www/avatar → /local/avatar/). */
+    var avatarClipPath: String
+        get() = sp.getString(KEY_AVATAR_PATH, DEFAULT_AVATAR_PATH) ?: DEFAULT_AVATAR_PATH
+        set(v) = sp.edit().putString(KEY_AVATAR_PATH, v).apply()
+
+    var avatarSatellitePrefix: String
+        get() = sp.getString(KEY_AVATAR_PREFIX, DEFAULT_AVATAR_PREFIX) ?: DEFAULT_AVATAR_PREFIX
+        set(v) = sp.edit().putString(KEY_AVATAR_PREFIX, v).apply()
+
+    var avatarNightEntity: String
+        get() = sp.getString(KEY_AVATAR_NIGHT, DEFAULT_AVATAR_NIGHT) ?: DEFAULT_AVATAR_NIGHT
+        set(v) = sp.edit().putString(KEY_AVATAR_NIGHT, v).apply()
+
+    var avatarClipEntity: String
+        get() = sp.getString(KEY_AVATAR_CLIP_ENTITY, DEFAULT_AVATAR_CLIP_ENTITY) ?: DEFAULT_AVATAR_CLIP_ENTITY
+        set(v) = sp.edit().putString(KEY_AVATAR_CLIP_ENTITY, v).apply()
+
+    /** Satelliten, die den Avatar nie auslösen (kommagetrennte Entity-IDs). */
+    var avatarIgnoredSatellites: String
+        get() = sp.getString(KEY_AVATAR_IGNORED, "") ?: ""
+        set(v) = sp.edit().putString(KEY_AVATAR_IGNORED, v).apply()
+
+    /** Idle-Bewegungen: 0 = aus, 1 = selten, 2 = normal, 3 = oft. */
+    var avatarIdleMotion: Int
+        get() = sp.getInt(KEY_AVATAR_MOTION, 2)
+        set(v) = sp.edit().putInt(KEY_AVATAR_MOTION, v).apply()
+
+    /** Szenen, die den idle-Loop beleben (kommagetrennt). */
+    var avatarAccentScenes: String
+        get() = sp.getString(KEY_AVATAR_ACCENTS, DEFAULT_AVATAR_ACCENTS) ?: DEFAULT_AVATAR_ACCENTS
+        set(v) = sp.edit().putString(KEY_AVATAR_ACCENTS, v).apply()
+
+    /** Zusätzliche Szenen-Basisnamen (z. B. "wave") oder Dateinamen (z. B. "party.mp4"), kommagetrennt. */
+    var avatarExtraClips: String
+        get() = sp.getString(KEY_AVATAR_EXTRA, "") ?: ""
+        set(v) = sp.edit().putString(KEY_AVATAR_EXTRA, v).apply()
+
+    /** Nachlauf (idle-Loop) nach der letzten Aktivität, bevor ausgeblendet wird. */
+    var avatarLingerMs: Long
+        get() = sp.getLong(KEY_AVATAR_LINGER, 4_000L)
+        set(v) = sp.edit().putLong(KEY_AVATAR_LINGER, v).apply()
+
+    /** Restlaufzeit, ab der dringende Wechsel (listening, wake_up) sofort per Crossfade erfolgen. */
+    var avatarUrgentThresholdMs: Long
+        get() = sp.getLong(KEY_AVATAR_URGENT, 600L)
+        set(v) = sp.edit().putLong(KEY_AVATAR_URGENT, v).apply()
+
+    var avatarCrossfadeMs: Long
+        get() = sp.getLong(KEY_AVATAR_CROSSFADE, 200L)
+        set(v) = sp.edit().putLong(KEY_AVATAR_CROSSFADE, v).apply()
+
+    /** Frames, die am Clipende übersprungen werden (gegen doppelten Home-Frame an der Naht). */
+    var avatarTrimFrames: Int
+        get() = sp.getInt(KEY_AVATAR_TRIM, 1)
+        set(v) = sp.edit().putInt(KEY_AVATAR_TRIM, v).apply()
+
+    /** "16:9" oder "9:16". */
+    var avatarAspect: String
+        get() = sp.getString(KEY_AVATAR_ASPECT, "16:9") ?: "16:9"
+        set(v) = sp.edit().putString(KEY_AVATAR_ASPECT, v).apply()
+
+    /** Panelgröße in Prozent der verfügbaren Fläche. */
+    var avatarSizePercent: Int
+        get() = sp.getInt(KEY_AVATAR_SIZE, 100)
+        set(v) = sp.edit().putInt(KEY_AVATAR_SIZE, v).apply()
+
+    var avatarAlwaysShow: Boolean
+        get() = sp.getBoolean(KEY_AVATAR_ALWAYS, false)
+        set(v) = sp.edit().putBoolean(KEY_AVATAR_ALWAYS, v).apply()
+
     companion object {
         const val DEFAULT_URL = "https://ha.quandel-home.cc"
         const val DEFAULT_PORT = 10700
         const val DEFAULT_NAME = "Wand-Tablet"
         const val DEFAULT_SCREENSAVER_DELAY = 120_000L
         const val DEFAULT_PARTICLE_ASSIST_MIN_VISIBLE_MS = 5_000L
+        const val DEFAULT_AVATAR_ACCENTS = "look_left, look_right, happy"
+        const val DEFAULT_AVATAR_PATH = "/local/avatar/"
+        const val DEFAULT_AVATAR_PREFIX = "assist_satellite."
+        const val DEFAULT_AVATAR_NIGHT = "input_boolean.avatar_nacht"
+        const val DEFAULT_AVATAR_CLIP_ENTITY = "input_text.avatar_clip"
 
         private const val KEY_URL = "url"
         private const val KEY_PORT = "port"
@@ -191,5 +281,22 @@ class Prefs(context: Context) {
         private const val KEY_PARTICLE_SHOW_RESPONSE = "particle_show_response"
         private const val KEY_PARTICLE_ASSEMBLY_ANIM = "particle_assembly_anim"
         private const val KEY_PARTICLE_ANIM_SPEED = "particle_anim_speed"
+        private const val KEY_AVATAR_ENABLED = "avatar_enabled"
+        private const val KEY_AVATAR_MOTION = "avatar_idle_motion"
+        private const val KEY_AVATAR_ACCENTS = "avatar_accent_scenes"
+        private const val KEY_AVATAR_IGNORED = "avatar_ignored_satellites"
+        private const val KEY_SATELLITE_ENABLED = "satellite_enabled"
+        private const val KEY_AVATAR_PATH = "avatar_clip_path"
+        private const val KEY_AVATAR_PREFIX = "avatar_satellite_prefix"
+        private const val KEY_AVATAR_NIGHT = "avatar_night_entity"
+        private const val KEY_AVATAR_CLIP_ENTITY = "avatar_clip_entity"
+        private const val KEY_AVATAR_EXTRA = "avatar_extra_clips"
+        private const val KEY_AVATAR_LINGER = "avatar_linger_ms"
+        private const val KEY_AVATAR_URGENT = "avatar_urgent_threshold_ms"
+        private const val KEY_AVATAR_CROSSFADE = "avatar_crossfade_ms"
+        private const val KEY_AVATAR_TRIM = "avatar_trim_frames"
+        private const val KEY_AVATAR_ASPECT = "avatar_aspect"
+        private const val KEY_AVATAR_SIZE = "avatar_size_percent"
+        private const val KEY_AVATAR_ALWAYS = "avatar_always_show"
     }
 }

@@ -31,6 +31,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import cc.quandel.dashvoice.avatar.AvatarController
+import cc.quandel.dashvoice.avatar.AvatarOverlayView
 import cc.quandel.dashvoice.particle.ParticleAssistantController
 import cc.quandel.dashvoice.particle.ParticleAssistTiming
 import cc.quandel.dashvoice.particle.ParticleState
@@ -76,6 +78,8 @@ class MainActivity : AppCompatActivity() {
     private var particleAssistShownAt = 0L
 
     private lateinit var doorbellOverlay: View
+    private lateinit var avatarOverlay: AvatarOverlayView
+    private var avatarController: AvatarController? = null
     private lateinit var doorbellWebView: WebView
     @Volatile private var doorbellWasOn = false
     private var doorbellLastLoadedAt = 0L
@@ -193,6 +197,7 @@ class MainActivity : AppCompatActivity() {
         voiceAnimation.style = prefs.animationStyle
         doorbellOverlay     = findViewById(R.id.doorbellOverlay)
         doorbellWebView     = findViewById(R.id.doorbellWebView)
+        avatarOverlay       = findViewById(R.id.avatarOverlay)
 
         webView.settings.apply {
             javaScriptEnabled = true
@@ -246,6 +251,7 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<ImageButton>(R.id.micButton).apply {
             setOnClickListener {
+                if (!prefs.satelliteEnabled) return@setOnClickListener   // Tablet hört nicht zu
                 AppLog.i("UI", "Tap-to-Talk gedrückt")
                 VoiceService.talk(this@MainActivity)
             }
@@ -284,6 +290,9 @@ class MainActivity : AppCompatActivity() {
         AppLog.listener = { refreshLog() }
 
         screensaver.setOnClickListener { dismissScreensaver() }
+
+        avatarController = AvatarController(this, avatarOverlay, ::onAvatarVisibilityChanged)
+        avatarController?.applySettings()
 
         subscribeVoiceEvents()
         ensurePermissions()
@@ -374,7 +383,10 @@ class MainActivity : AppCompatActivity() {
         VoiceEvents.onWake = {
             val screensaverActive = screensaver.visibility == View.VISIBLE
 
-            if (screensaverActive && prefs.enableParticleScreensaver) {
+            // Ist der Video-Avatar aktiv, übernimmt er die Visualisierung – der Partikel-Avatar
+            // würde sonst unsichtbar darunter mitlaufen.
+            val videoAvatar = avatarController?.isActive == true
+            if (screensaverActive && prefs.enableParticleScreensaver && !videoAvatar) {
                 showParticleAssistant()
             } else {
                 // Dashboard aktiv → klassisches Voice-Overlay
@@ -527,6 +539,19 @@ class MainActivity : AppCompatActivity() {
         statusDot.background?.let {
             (it as? android.graphics.drawable.GradientDrawable)?.setColor(color)
         } ?: statusDot.setBackgroundColor(color)
+    }
+
+    /**
+     * Video-Avatar ein-/ausgeblendet: Transkript-Overlay über den Avatar heben und die
+     * Bildschirmhelligkeit (gedimmter Uhr-Screensaver) für die Dauer anheben.
+     */
+    private fun onAvatarVisibilityChanged(visible: Boolean) {
+        voiceOverlay.translationZ = if (visible) 8f * resources.displayMetrics.density else 0f
+        val lp = window.attributes
+        lp.screenBrightness = if (!visible && screensaver.visibility == View.VISIBLE &&
+            clockBlock.visibility == View.VISIBLE && !particleAssistActive
+        ) 0.03f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = lp
     }
 
     private fun setWebViewBlur(blur: Boolean) {
@@ -711,7 +736,10 @@ class MainActivity : AppCompatActivity() {
             val now = Date()
             clock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
             screensaverDate.text = SimpleDateFormat("EEEE, d. MMMM", Locale.GERMAN).format(now)
-            lp.screenBrightness = 0.03f
+            // Läuft gerade der Video-Avatar, erst bei dessen Ausblenden dimmen.
+            lp.screenBrightness = if (avatarController?.isVisible == true) {
+                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            } else 0.03f
             ui.post(tickClock)
             startSensorFetcher()
         }
@@ -854,6 +882,10 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         enterImmersive()
+        // Nach Rückkehr aus den Einstellungen geänderte Avatar-Optionen übernehmen.
+        avatarController?.applySettings()
+        // Ohne Sprachsatellit ist der Mikrofon-Knopf nur noch der (Lang-drücken-)Zugang zu den Einstellungen.
+        findViewById<ImageButton>(R.id.micButton).alpha = if (prefs.satelliteEnabled) 1f else 0.25f
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -896,6 +928,8 @@ class MainActivity : AppCompatActivity() {
         voiceAnimation.stopAnimation()
         sensorFetcher?.stop()
         particleController?.destroy()
+        avatarController?.destroy()
+        avatarController = null
         ui.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
